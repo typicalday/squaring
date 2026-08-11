@@ -2,9 +2,18 @@
 // returns load diagnostics plus integrity errors and warnings.
 
 import fs from 'node:fs';
+import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { extractBodyRefs, parseSquareUri, parseExternalUri } from './ids.ts';
-import { changesTargeting, type Diagnostic, type Graph, type SquareDoc } from './load.ts';
+import { extractBodyRefs, parseSquareUri, parseChangeUri, parseExternalUri } from './ids.ts';
+import {
+  bindingMatches,
+  changesTargeting,
+  isConfinedBindingGlob,
+  type Diagnostic,
+  type Graph,
+  type SquareDoc
+} from './load.ts';
+import { PROTOCOL_MD } from './protocol.ts';
 
 const STALE_BLOCKED_DAYS = 14;
 
@@ -140,13 +149,34 @@ function checkSquare(graph: Graph, square: SquareDoc, out: Diagnostic[]): void {
 
   const decisionIds = new Set((meta.decisions ?? []).map((d) => d.id));
   for (const decision of meta.decisions ?? []) {
-    if (decision.supersededBy != null && !decisionIds.has(decision.supersededBy)) {
-      out.push(
-        err(
-          file,
-          `decision "${decision.id}" supersededBy nonexistent decision "${decision.supersededBy}" (SPEC §11 error 6)`
-        )
-      );
+    if (decision.supersededBy != null) {
+      if (decision.supersededBy === decision.id) {
+        out.push(err(file, `decision "${decision.id}" is superseded by itself (SPEC §11 error 6)`));
+      } else if (!decisionIds.has(decision.supersededBy)) {
+        out.push(
+          err(
+            file,
+            `decision "${decision.id}" supersededBy nonexistent decision "${decision.supersededBy}" (SPEC §11 error 6)`
+          )
+        );
+      }
+    }
+    if (decision.from !== undefined) {
+      const changeId = parseChangeUri(decision.from);
+      const change = changeId === null ? undefined : graph.changes.get(changeId);
+      if (!change) {
+        out.push(
+          err(file, `decision "${decision.id}" from ${decision.from}: Change does not exist (SPEC §11 error 7)`)
+        );
+      } else if (change.meta.phase !== 'done') {
+        out.push(
+          err(
+            file,
+            `decision "${decision.id}" was promoted from ${decision.from}, whose phase is "${change.meta.phase}" — ` +
+              `decisions are promoted only when the Change is done (SPEC §9, §11 error 7)`
+          )
+        );
+      }
     }
   }
 
@@ -158,8 +188,12 @@ function checkSquare(graph: Graph, square: SquareDoc, out: Diagnostic[]): void {
     out.push(warn(file, 'declares commitments but no authority block — S1 requires authority (SPEC §11 warning 2)'));
   }
   for (const glob of meta.bindings ?? []) {
+    if (!isConfinedBindingGlob(glob)) {
+      out.push(err(file, `binding "${glob}" must be a repo-relative glob without ".." (SPEC §6, §11 error 8)`));
+      continue;
+    }
     try {
-      const matches = fs.globSync(glob, { cwd: graph.rootDir });
+      const matches = bindingMatches(graph.rootDir, glob);
       if (matches.length === 0) out.push(warn(file, `binding "${glob}" matches no files`));
     } catch {
       out.push(warn(file, `binding "${glob}" could not be evaluated`));
@@ -236,6 +270,30 @@ function lastCommitAgeDays(rootDir: string, relFile: string): number | null {
   }
 }
 
+/**
+ * PROTOCOL.md is tool-owned: `squaring init` (re)writes it from the running
+ * tool's PROTOCOL_MD constant. After a tool upgrade the on-disk copy goes
+ * stale silently — this warning is the refresh signal. A missing file is not
+ * flagged: not every squared repository installs the protocol file.
+ */
+function checkProtocolFreshness(graph: Graph, out: Diagnostic[]): void {
+  const rel = path.join(graph.squaresDir, 'PROTOCOL.md');
+  let onDisk: string;
+  try {
+    onDisk = fs.readFileSync(path.join(graph.rootDir, rel), 'utf8');
+  } catch {
+    return;
+  }
+  if (onDisk !== PROTOCOL_MD) {
+    out.push(
+      warn(
+        rel,
+        'differs from the protocol shipped with this squaring version — run `squaring init` to refresh the tool-owned file (SPEC §11 warning 5)'
+      )
+    );
+  }
+}
+
 function checkBodyRefs(graph: Graph, out: Diagnostic[]): void {
   const docs = [...graph.squares.values(), ...graph.changes.values()];
   for (const doc of docs) {
@@ -263,6 +321,7 @@ export function validateGraph(graph: Graph): Diagnostic[] {
   checkPartOfCycles(graph, out);
   checkChanges(graph, out);
   checkBodyRefs(graph, out);
+  checkProtocolFreshness(graph, out);
 
   return out.sort((a, b) => {
     if (a.severity !== b.severity) return a.severity === 'error' ? -1 : 1;
@@ -278,7 +337,8 @@ export function hasErrors(diagnostics: Diagnostic[]): boolean {
 export function formatDiagnostics(diagnostics: Diagnostic[]): string {
   if (diagnostics.length === 0) return 'OK — no errors, no warnings.';
   const lines = diagnostics.map(
-    (d) => `${d.severity === 'error' ? 'ERROR' : 'WARN '} ${d.file ? d.file + ': ' : ''}${d.message}`
+    (d) =>
+      `${d.severity === 'error' ? 'ERROR' : 'WARN '} ${d.file ? d.file + (d.line !== undefined ? `:${d.line}` : '') + ': ' : ''}${d.message}`
   );
   const errors = diagnostics.filter((d) => d.severity === 'error').length;
   const warnings = diagnostics.length - errors;

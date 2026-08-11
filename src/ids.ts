@@ -65,3 +65,8 @@ export function extractBodyRefs(body: string): BodyRefs {
   const uris = [...body.matchAll(URI_IN_PROSE_RE)].map((m) => m[0]);
   return { wiki, uris };
 }
+
+/** Replace `[[id]]` authoring sugar with the canonical `square://id` URI (SPEC §5). */
+export function resolveWikiLinks(text: string): string {
+  return text.replace(WIKI_RE, (_match, id: string) => `square://${id}`);
+}

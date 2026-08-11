@@ -38,13 +38,15 @@ test('missing frontmatter is a load error', () => {
   }
 });
 
-test('invalid YAML is a load error naming the file', () => {
+test('invalid YAML is a load error naming the file and line', () => {
   const root = makeRepo({ 'squares/a.square.md': '---\n{ broken: [\n---\n' });
   try {
     const graph = loadGraph(root);
     assert.equal(graph.squares.size, 0);
     assert.equal(graph.diagnostics[0]!.file, 'squares/a.square.md');
     assert.match(graph.diagnostics[0]!.message, /invalid YAML/);
+    // The broken YAML starts on file line 2 (line 1 is the opening ---).
+    assert.equal(graph.diagnostics[0]!.line, 2);
   } finally {
     rmRepo(root);
   }

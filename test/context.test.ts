@@ -4,7 +4,7 @@ import { loadGraph } from '../src/load.ts';
 import { compileSquarePack, compileChangePack, compileContext } from '../src/context.ts';
 import { DEMO, makeRepo, rmRepo, squareFile } from './helpers.ts';
 
-test('square pack renders the ten sections in order with edges first', () => {
+test('square pack renders the eleven sections in order with edges first', () => {
   const graph = loadGraph(DEMO);
   const pack = compileSquarePack(graph, 'orders');
 
@@ -13,13 +13,14 @@ test('square pack renders the ten sections in order with edges first', () => {
     '## 1. Identity',
     '## 2. Non-goals & boundaries',
     '## 3. Commitments',
-    '## 4. Contracts',
-    '## 5. Ownership & authority',
-    '## 6. Decisions',
-    '## 7. Unresolved questions',
-    '## 8. Active Changes',
-    '## 9. Source bindings',
-    '## 10. Notes (Square body, verbatim)'
+    '## 4. Scenarios',
+    '## 5. Contracts',
+    '## 6. Ownership & authority',
+    '## 7. Decisions',
+    '## 8. Unresolved questions',
+    '## 9. Active Changes',
+    '## 10. Source bindings',
+    '## 11. Notes (Square body)'
   ];
   let previous = -1;
   for (const header of headers) {
@@ -60,9 +61,17 @@ test('square pack injects applicable policies, suspensions, and counterparties',
   // Unresolved carries the A3 reminder.
   assert.ok(orders.includes('Rule A3'));
   assert.ok(orders.includes('partial-refunds'));
+
+  // Scenarios render given/when on one line and each then as a sub-item.
+  assert.ok(orders.includes('- **happy-path** — given: a cart with one item · when: the customer places the order'));
+  assert.ok(orders.includes('  - then: the order is created in state pending'));
+
+  // The body's [[payments]] wiki link is resolved to the canonical URI.
+  assert.ok(orders.includes('coordinates with square://payments for money movement'));
+  assert.ok(!orders.includes('[[payments]]'));
 });
 
-test('should-not commitments sort into section 2, and abandoned Changes are excluded from section 8', () => {
+test('should-not commitments sort into section 2, and abandoned Changes are excluded from section 9', () => {
   const root = makeRepo({
     'squares/a.square.md': `---
 apiVersion: squaring/v0
@@ -102,9 +111,9 @@ phase: abandoned
     const pack = compileSquarePack(graph, 'a');
     // should-not is boundary-like → section 2, ahead of section 3.
     assert.ok(pack.indexOf('soft-edge') < pack.indexOf('## 3. Commitments'));
-    // An abandoned Change is neither "active" nor listed; section 8 is empty.
+    // An abandoned Change is neither "active" nor listed; section 9 is empty.
     assert.ok(!pack.includes('change://dead'));
-    assert.match(pack.slice(pack.indexOf('## 8. Active Changes')), /## 8\. Active Changes\n- \(none\)/);
+    assert.match(pack.slice(pack.indexOf('## 9. Active Changes')), /## 9\. Active Changes\n- \(none\)/);
   } finally {
     rmRepo(root);
   }
@@ -121,9 +130,37 @@ test('change pack embeds abbreviated packs for each target', () => {
   assert.ok(pack.includes('## Targeted Squares (2)'));
   assert.ok(pack.includes('## Target: Orders (square://orders)'));
   assert.ok(pack.includes('## Target: Payments (square://payments)'));
-  // Abbreviated packs use ### section headers and stop at section 7.
+  // Abbreviated packs use ### section headers and stop at section 8.
   assert.ok(pack.includes('### 1. Identity'));
-  assert.ok(!pack.includes('### 8.'));
+  assert.ok(pack.includes('### 8. Unresolved questions'));
+  assert.ok(!pack.includes('### 9.'));
+});
+
+test('change pack lists a duplicated target once', () => {
+  const root = makeRepo({
+    'squares/a.square.md': squareFile('a'),
+    'squares/changes/c.change.md': `---
+apiVersion: squaring/v0
+kind: Change
+id: c
+name: C
+type: repair
+intent: i
+targets:
+  - square://a
+  - square://a
+semanticDiff: []
+phase: active
+---
+`
+  });
+  try {
+    const pack = compileChangePack(loadGraph(root), 'c');
+    assert.ok(pack.includes('## Targeted Squares (1)'));
+    assert.equal(pack.match(/## Target: Square a/g)?.length, 1);
+  } finally {
+    rmRepo(root);
+  }
 });
 
 test('compilation is deterministic (byte-identical on repeat)', () => {

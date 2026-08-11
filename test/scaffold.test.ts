@@ -163,3 +163,37 @@ test('initRepo merges into an existing .mcp.json and refuses to touch broken JSO
     rmRepo(broken);
   }
 });
+
+test('initRepo leaves a valid-JSON .mcp.json of the wrong shape untouched, with a note', () => {
+  // Valid JSON, wrong shapes: a non-object mcpServers, and a top-level array.
+  // Both previously threw a TypeError mid-init; now init completes and notes.
+  for (const content of ['{ "mcpServers": "nope" }\n', '[1, 2, 3]\n']) {
+    const root = makeRepo({ '.mcp.json': content });
+    try {
+      const result = initRepo(root);
+      assert.equal(fs.readFileSync(path.join(root, '.mcp.json'), 'utf8'), content);
+      assert.ok(result.notes.some((n) => n.includes('does not have the expected')));
+      assert.ok(!result.updated.includes('.mcp.json'));
+    } finally {
+      rmRepo(root);
+    }
+  }
+});
+
+test('a hostile display name cannot inject YAML through the scaffold templates', () => {
+  const root = makeRepo({});
+  const evil = 'Evil" name\narchetype: policy\nx: "y';
+  try {
+    scaffoldSquare(root, 'victim', evil);
+    scaffoldChange(root, 'victim-change', evil);
+    const graph = loadGraph(root);
+    // Both files parse cleanly and the name round-trips as ONE string —
+    // the newline stayed inside the quoted scalar instead of becoming keys.
+    assert.deepEqual(graph.diagnostics, []);
+    assert.equal(graph.squares.get('victim')!.meta.name, evil);
+    assert.equal(graph.squares.get('victim')!.meta.archetype, undefined);
+    assert.equal(graph.changes.get('victim-change')!.meta.name, evil);
+  } finally {
+    rmRepo(root);
+  }
+});

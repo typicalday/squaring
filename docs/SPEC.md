@@ -131,6 +131,7 @@ decisions:                    # optional, append-only (§7)
     choice: Stripe is the payment provider.
     rationale: >
       Stripe is the accepted provider for the current product.
+    from: change://choose-provider   # optional: the Change that promoted this decision (§9)
     supersededBy: null        # or a later decision id
 scenarios:                    # optional
   - id: duplicate-event
@@ -138,6 +139,7 @@ scenarios:                    # optional
     when: The same provider event is delivered again.
     then:
       - No additional Payment transition occurs.
+    evidenceClass: test       # optional, see §7; default none
 unresolved:                   # optional
   - id: partial-refunds
     question: Are partial refunds supported?
@@ -171,7 +173,7 @@ Claim kinds and what a conforming agent does with each:
 | contract | Promise across a Square boundary | Changing one requires considering every consumer |
 | decision | A deliberately chosen design | Never silently relitigate; supersede explicitly |
 | scenario | Concrete observable behavior | Preserve; the natural seed for tests |
-| nonGoal | Responsibility explicitly outside | Never implement inside this Square |
+| nonGoal | Responsibility explicitly outside (an edge declaration, not an addressable claim — it has no URI) | Never implement inside this Square |
 | unresolved | No accepted answer exists | **Never silently answer** — see §10 rule A3 |
 
 **`evidenceClass`** (optional on commitments and scenarios) declares how the claim could be checked, in decreasing order of assurance:
@@ -247,7 +249,7 @@ extensions: {}
 
 **Change types.** `evolution` changes meaning and realization. `refactor` changes realization only (`semanticDiff` must be empty). `repair` restores conformance to unchanged meaning. `adoption` proposes Squares inferred from existing code, possibly with no realization change. The type tells the agent whether it is allowed to change meaning at all.
 
-**Lifecycle.** `draft` → `active` → (`blocked` ⇄ `active`) → `done` | `abandoned`. On `done`: every `proposedDecision` that proved durable is appended to the owning Square's `decisions` (this is the only routine way task work writes into a Square), any resolved `unresolved` items are removed from the Square with a decision recording the answer, and the Change file is kept as history.
+**Lifecycle.** `draft` → `active` → (`blocked` ⇄ `active`) → `done` | `abandoned`. On `done`: every `proposedDecision` that proved durable is appended to the owning Square's `decisions` with `from: change://<id>` recording the promoting Change (this is the only routine way task work writes into a Square), any resolved `unresolved` items are removed from the Square with a decision recording the answer, and the Change file is kept as history. Because promotion happens only at completion, a decision whose `from` names a Change that is not `done` is a validation error (§11).
 
 **Suspensions.** Legitimate work sometimes passes through states that violate an invariant (migrations). A Change may declare, per suspended claim:
 
@@ -282,7 +284,7 @@ Installed into each repository as `squares/PROTOCOL.md` by `squaring init`; a co
 
 ## 11. Validation
 
-`squaring validate` (and the MCP `validate` tool) reports, with file/line where possible:
+`squaring validate` (and the MCP `validate` tool) reports each finding with its file, and with a line number where one is available (currently YAML parse errors):
 
 **Errors** (graph is invalid):
 1. Frontmatter fails the schema, or an unknown field appears outside `extensions`.
@@ -290,34 +292,38 @@ Installed into each repository as `squares/PROTOCOL.md` by `squaring init`; a co
 3. Broken references: `partOf`, `relationships[].target`, `contracts[].consumes[].from`, `Change.targets`, `suspensions[].claim`, `appliesTo` entries, or any `[[link]]` / `square://` URI in a body that names a nonexistent Square or claim.
 4. `partOf` cycle, or a `contains` relationship expressed anywhere except `partOf`.
 5. A `refactor`/`repair` Change with a non-empty `semanticDiff`; an `evolution` Change with an empty one; a `done` Change with unpromoted `proposedDecisions`.
-6. An edited (rather than superseded) decision — detected structurally where possible: a decision whose `supersededBy` points at a nonexistent decision.
+6. An edited (rather than superseded) decision — detected structurally where possible: a decision whose `supersededBy` points at a nonexistent decision, or at itself.
+7. A decision whose `from` names a Change that does not exist, or whose phase is not `done` — decisions are promoted only when their Change completes (§9).
+8. A `bindings` glob that is absolute or contains `..` — bindings are repo-relative and must stay inside the repository.
 
 **Warnings** (valid but suspect):
 1. A Square with no `nonGoals` and no `commitments` (pure description — likely rot bait).
 2. `authority` missing on a Square that declares commitments (S1 requires authority).
 3. `bindings` globs matching zero files.
 4. A `blocked` Change untouched by git for a long period (reported informationally).
+5. `squares/PROTOCOL.md` differs from the protocol shipped with the running squaring version — the file is tool-owned; refresh with `squaring init`.
 
 ---
 
 ## 12. Context Packs
 
-`squaring context <square-id | change-id>` compiles a deterministic Markdown pack. Determinism: identical graph + identical arguments ⇒ byte-identical output (ordering is defined; no timestamps).
+`squaring context <square-id | change-id>` compiles a deterministic Markdown pack. Determinism: identical graph + identical arguments ⇒ byte-identical output above the trailing generation stamp (ordering is defined; no timestamps; the stamp carries the git revision when one is available).
 
 **Normative section order** — edges first, because sharp edges are what agents round away; generic descriptions are recoverable, edges are not:
 
 1. **Target identity** — name, purpose, `partOf` chain.
-2. **Non-goals and boundaries** — the target's `nonGoals` and boundary-like commitments (kind `boundary`, or strength `must-not` / `should-not`), plus applicable policy-Square commitments (`appliesTo` matches).
+2. **Non-goals and boundaries** — the target's `nonGoals` and boundary-like commitments (kind `boundary`, or strength `must-not` / `should-not`), plus applicable policy-Square commitments (`appliesTo` matches), each pointing back at the owning policy claim.
 3. **Commitments** — remaining commitments with kind, strength, `evidenceClass`, and any active suspensions flagged inline.
-4. **Contracts** — provided (with each consumer Square named), consumed (with each provider named). One hop of counterparties: for each counterparty Square, its name, purpose, and the shared contract only.
-5. **Ownership and dependency directions** — `owns`, `authority`, `relationships`.
-6. **Decisions** — non-superseded decisions with rationale; superseded ones listed by title only.
-7. **Unresolved questions** — verbatim, prefixed with the A3 rule reminder.
-8. **Active Changes** — every Change targeting the Square whose phase is neither `done` nor `abandoned`: intent, phase, `semanticDiff`, status, suspensions.
-9. **Source bindings** — the target's `bindings`, with matched file lists (top level only).
-10. **Body** — the Square's Markdown body verbatim.
+4. **Scenarios** — given/when/then, with `evidenceClass` where declared.
+5. **Contracts** — provided (with each consumer Square named), consumed (with each provider named). One hop of counterparties: for each counterparty Square, its name, purpose, and the shared contract only.
+6. **Ownership and dependency directions** — `owns`, `authority`, `relationships`.
+7. **Decisions** — non-superseded decisions with rationale and `from` provenance where declared; superseded ones listed by id only.
+8. **Unresolved questions** — verbatim, prefixed with the A3 rule reminder.
+9. **Active Changes** — every Change targeting the Square whose phase is neither `done` nor `abandoned`: intent, phase, `semanticDiff`, status, suspensions.
+10. **Source bindings** — the target's `bindings`, with matched file lists (top level only); unconfined globs (§11 error 8) are named and skipped.
+11. **Body** — the Square's Markdown body, with `[[wiki]]` links resolved to canonical `square://` URIs.
 
-For a Change id, the pack is the union of the packs of every targeted Square (each abbreviated to sections 1–7), preceded by the full Change and followed by shared-neighbor deduplication. Packs end with a one-line generation stamp: graph file count and git revision when available.
+For a Change id, the pack is the full Change followed by the pack of every targeted Square (duplicates listed once, each abbreviated to sections 1–8). Packs end with a one-line generation stamp: graph file count and git revision when available.
 
 ---
 

@@ -5,13 +5,15 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { parse as parseYaml } from 'yaml';
+import { parse as parseYaml, YAMLError } from 'yaml';
 import * as z from 'zod';
 import { SquareSchema, ChangeSchema, type Square, type Change } from './schema.ts';
 
 export interface Diagnostic {
   severity: 'error' | 'warning';
   file?: string;
+  /** 1-based line in `file`, when the underlying error carries a position (YAML parse errors do) */
+  line?: number;
   message: string;
 }
 
@@ -202,7 +204,15 @@ function loadDoc<T>(
   try {
     fm = splitFrontmatter(content);
   } catch (err) {
-    diagnostics.push({ severity: 'error', file: relFile, message: `invalid YAML: ${String(err)}` });
+    // yaml's parse errors carry a position relative to the frontmatter block;
+    // the block starts on file line 2 (after the opening ---), hence the +1.
+    const linePos = err instanceof YAMLError ? err.linePos?.[0] : undefined;
+    diagnostics.push({
+      severity: 'error',
+      file: relFile,
+      line: linePos ? linePos.line + 1 : undefined,
+      message: `invalid YAML: ${String(err)}`
+    });
     return null;
   }
   if (!fm) {
@@ -321,6 +331,62 @@ export function loadGraph(rootDir: string): Graph {
   }
 
   return graph;
+}
+
+/**
+ * Walk up from `startDir` looking for a squared repository root: the nearest
+ * ancestor (including startDir itself) that carries either a `.squaring.json`
+ * or a `squares/` directory. Returns null when no ancestor qualifies.
+ *
+ * Used by CLI read commands and by the MCP server so they work from any
+ * subdirectory. Write entry points (`squaring init`, `squaring new`) never
+ * walk up — they act on the working directory the user invoked them in.
+ */
+export function findRepoRoot(startDir: string): string | null {
+  let current = path.resolve(startDir);
+  for (;;) {
+    if (fs.existsSync(path.join(current, '.squaring.json'))) return current;
+    try {
+      if (fs.statSync(path.join(current, 'squares')).isDirectory()) return current;
+    } catch {
+      // no squares/ entry here — keep walking
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
+/**
+ * True when a bindings glob is confined to the repository by construction:
+ * relative, and free of `..` (SPEC §6 — bindings are repo-relative globs).
+ * An absolute or `..`-carrying glob is a validation error and is never
+ * enumerated — otherwise a hostile Square could list files from outside the
+ * repository into Context Packs.
+ */
+export function isConfinedBindingGlob(glob: string): boolean {
+  return !path.isAbsolute(glob) && !glob.includes('..');
+}
+
+/**
+ * Repo-relative files matched by a bindings glob. Returns [] for an
+ * unconfined glob, and filters out any match that resolves outside rootDir.
+ */
+export function bindingMatches(rootDir: string, glob: string): string[] {
+  if (!isConfinedBindingGlob(glob)) return [];
+  const root = path.resolve(rootDir);
+  let matched: string[];
+  try {
+    matched = fs.globSync(glob, { cwd: root });
+  } catch {
+    return [];
+  }
+  return matched
+    .filter((m) => {
+      const abs = path.resolve(root, m);
+      return abs === root || abs.startsWith(root + path.sep);
+    })
+    .sort();
 }
 
 /** Changes whose phase is neither done nor abandoned. */

@@ -1,19 +1,21 @@
-// The `squaring` CLI — SPEC §13. Thin wrapper over the library; every
-// command loads the graph fresh from the current working directory.
+// The `squaring` CLI — SPEC §13. Thin wrapper over the library. Read commands
+// (validate, list, show, graph, context) discover the repository root by
+// walking up from the current working directory (findRepoRoot); `init` and
+// `new` act on the current working directory exactly, so creating a nested
+// repo stays possible and scaffolding never lands in a surprise parent.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { Command } from 'commander';
-import { loadGraph, activeChanges, type Graph } from './load.ts';
+import { loadGraph, activeChanges, findRepoRoot, type Graph } from './load.ts';
 import { validateGraph, hasErrors, formatDiagnostics } from './validate.ts';
 import { compileContext } from './context.ts';
 import { scaffoldSquare, scaffoldChange } from './scaffold.ts';
 import { initRepo } from './init.ts';
 import { startMcpServer } from './mcp.ts';
 import { PROTOCOL_MD } from './protocol.ts';
-
-const VERSION = '0.1.0';
+import { VERSION } from './version.ts';
 
 function fail(message: string): never {
   process.stderr.write(`squaring: ${message}\n`);
@@ -23,7 +25,7 @@ function fail(message: string): never {
 function loadOrFail(): Graph {
   let graph: Graph;
   try {
-    graph = loadGraph(process.cwd());
+    graph = loadGraph(findRepoRoot(process.cwd()) ?? process.cwd());
   } catch (err) {
     // e.g. a malformed or out-of-bounds .squaring.json — a diagnostic, not a stack trace
     fail(err instanceof Error ? err.message : String(err));
@@ -91,6 +93,9 @@ program
     process.stdout.write(`Changes (${changes.length}):\n`);
     for (const c of changes) {
       process.stdout.write(`  ${pad(c.meta.id, 28)} ${pad(c.meta.name, 32)} ${c.meta.type}  ${c.meta.phase}\n`);
+    }
+    if (graph.diagnostics.length > 0) {
+      process.stdout.write(`⚠ ${graph.diagnostics.length} file(s) failed to load — run \`squaring validate\`.\n`);
     }
   });
 
