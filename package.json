@@ -1,6 +1,6 @@
 {
   "name": "squaring",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Squaring — a semantic control plane for agent-built software: Squares, Changes, and compiled Context Packs.",
   "type": "module",
   "license": "MIT",
