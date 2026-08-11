@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "squaring": {
+      "command": "node",
+      "args": ["dist/cli.js", "mcp"]
+    }
+  }
+}
