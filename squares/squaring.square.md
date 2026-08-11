@@ -48,15 +48,22 @@ decisions:
       SquareStatus and Evidence are deferred to v0.2, keeping hooks
       (claim URIs, evidenceClass) so owenloop can attach proofs later.
     rationale: Verification without a proof engine would be theater; owenloop is the intended engine.
-unresolved:
-  - id: first-target-repo
-    question: Which existing repo gets squared first as the calibration case?
-  - id: npm-publish
-    question: Publish @typicalday/squaring to npm, or run it via npx from the git repo?
-  - id: square-bin-collision
-    question: >
-      The `square` bin alias collides with Block's Square CLI — keep the
-      alias or drop it and stay `squaring`-only?
+  - id: npm-public
+    date: 2026-08-11
+    choice: >
+      Distribute publicly: the GitHub repository is public and the package
+      ships to npm as @typicalday/squaring under the MIT license.
+    rationale: Adopting Squaring in another repo should be a one-line install, not a git clone.
+  - id: squaring-only-bin
+    date: 2026-08-11
+    choice: Ship a single `squaring` bin; the `square` alias is dropped.
+    rationale: The name `square` collides with Block's Square CLI; one unambiguous command.
+  - id: first-target-dogfood
+    date: 2026-08-11
+    choice: The first squared repository is squaring itself.
+    rationale: >
+      The repository has carried its own Square Graph since v0.1;
+      dogfooding calibrates the format before pointing at other codebases.
 authority:
   owns: [resource-model, agent-protocol, pack-format]
   delegates: [implementation-details]
