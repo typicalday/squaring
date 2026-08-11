@@ -1,7 +1,11 @@
 // The Squaring MCP server — SPEC §13. Stdio transport; every tool call
-// reloads the graph from the process working directory, so the server never
-// serves stale state and needs no file watching. Tool errors return
-// `isError: true` rather than throwing, so the agent sees the message.
+// reloads the graph from the discovered repository root (findRepoRoot walks
+// up from the process working directory), so the server never serves stale
+// state, needs no file watching, and works when the agent launches it from a
+// subdirectory. Scaffold tools resolve the same root, so a scaffold from a
+// subdirectory lands in the existing repo instead of starting a second one.
+// Tool errors return `isError: true` rather than throwing, so the agent sees
+// the message.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -9,12 +13,13 @@ import process from 'node:process';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import * as z from 'zod';
-import { loadGraph, activeChanges, type Graph } from './load.ts';
+import { loadGraph, activeChanges, findRepoRoot, type Graph } from './load.ts';
 import { validateGraph, formatDiagnostics } from './validate.ts';
 import { compileContext } from './context.ts';
 import { scaffoldSquare, scaffoldChange } from './scaffold.ts';
 import { PROTOCOL_MD } from './protocol.ts';
 import { CHANGE_TYPES } from './schema.ts';
+import { VERSION } from './version.ts';
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 
@@ -26,21 +31,28 @@ function toolError(err: unknown): ToolResult {
   return { content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }], isError: true };
 }
 
-/** Run a tool body against a freshly loaded graph; convert throws to isError results. */
-function withGraph(body: (graph: Graph) => string): ToolResult {
-  try {
-    return ok(body(loadGraph(process.cwd())));
-  } catch (err) {
-    return toolError(err);
-  }
-}
-
 function docSource(graph: Graph, file: string): string {
   return `# file: ${file}\n${fs.readFileSync(path.join(graph.rootDir, file), 'utf8')}`;
 }
 
-export async function startMcpServer(): Promise<void> {
-  const server = new McpServer({ name: 'squaring', version: '0.1.0' });
+/**
+ * Build the MCP server. `options.rootDir` pins the repository root (used by
+ * tests); without it, every tool call re-discovers the root from the process
+ * working directory at call time.
+ */
+export function createMcpServer(options?: { rootDir?: string }): McpServer {
+  const resolveRoot = (): string => options?.rootDir ?? findRepoRoot(process.cwd()) ?? process.cwd();
+
+  /** Run a tool body against a freshly loaded graph; convert throws to isError results. */
+  function withGraph(body: (graph: Graph) => string): ToolResult {
+    try {
+      return ok(body(loadGraph(resolveRoot())));
+    } catch (err) {
+      return toolError(err);
+    }
+  }
+
+  const server = new McpServer({ name: 'squaring', version: VERSION });
 
   server.registerTool(
     'get_protocol',
@@ -172,7 +184,7 @@ export async function startMcpServer(): Promise<void> {
     },
     ({ id, name }) => {
       try {
-        const result = scaffoldSquare(process.cwd(), id, name);
+        const result = scaffoldSquare(resolveRoot(), id, name);
         return ok(`created ${result.file} — fill in the TODOs, then run validate`);
       } catch (err) {
         return toolError(err);
@@ -193,7 +205,7 @@ export async function startMcpServer(): Promise<void> {
     },
     ({ id, name, type }) => {
       try {
-        const result = scaffoldChange(process.cwd(), id, name, type ?? 'evolution');
+        const result = scaffoldChange(resolveRoot(), id, name, type ?? 'evolution');
         return ok(`created ${result.file} — fill in the TODOs, then run validate`);
       } catch (err) {
         return toolError(err);
@@ -201,6 +213,11 @@ export async function startMcpServer(): Promise<void> {
     }
   );
 
+  return server;
+}
+
+export async function startMcpServer(): Promise<void> {
+  const server = createMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // stdout carries the MCP protocol; stderr is the only safe log channel.

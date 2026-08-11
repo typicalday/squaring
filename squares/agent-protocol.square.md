@@ -37,6 +37,8 @@ commitments:
     appliesTo: "*"
 authority:
   owns: [conformance-rules]
+bindings:
+  - src/protocol.ts
 ---
 
 The full rule text lives in `src/protocol.ts` (PROTOCOL_MD) and is installed

@@ -28,8 +28,13 @@ status:
     - wire orders to the refund contract
 suspensions:
   - claim: square://orders#commitment/no-unpaid-fulfillment
-    reason: Refund flow temporarily marks orders fulfilled before charge settles in the sandbox.
+    reason: >
+      Refund testing in the provider sandbox requires marking orders
+      fulfilled before the charge settles — a deliberate, sandbox-only
+      violation of no-unpaid-fulfillment while the refund flow is built.
     until: refund contract lands (this Change reaches done)
 ---
 
-Working notes: see provider sandbox quirks.
+Working notes: see provider sandbox quirks. Partial refunds stay out of
+scope: square://orders#unresolved/partial-refunds has no accepted answer,
+so this Change ships full refunds only (rule A3 — recorded, not answered).

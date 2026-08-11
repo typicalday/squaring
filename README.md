@@ -5,7 +5,7 @@ A semantic control plane for agent-built software.
 Squaring represents what a codebase is *supposed to mean* as a versioned graph
 of bounded commitments — **Squares** — kept in plain Markdown/YAML files inside
 the repository. Work that changes meaning goes through an explicit **Change**.
-Agents read a compiled **Context Pack** (intent, non-goals, commitments,
+Agents read a compiled **Context Pack** (purpose, non-goals, commitments,
 contracts, open questions) before they read code, and follow a small
 conformance protocol (rules A1–A9) that stops the two classic failure modes of
 vibe coding: silently answering open questions, and silently rewriting intent

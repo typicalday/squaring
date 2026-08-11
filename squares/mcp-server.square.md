@@ -16,7 +16,9 @@ contracts:
   consumes:
     - id: graph
       from: square://graph-loader
-      statement: Every tool call reloads the graph from the process working directory.
+      statement: >
+        Every tool call reloads the graph from the discovered repository
+        root (walking up from the process working directory).
     - id: packs
       from: square://context-compiler
       statement: context_pack returns the compiled pack verbatim.

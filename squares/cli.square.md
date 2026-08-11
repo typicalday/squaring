@@ -7,7 +7,8 @@ archetype: boundary
 partOf: squaring
 purpose: >
   The human face of Squaring: the `squaring` command (init, validate, list,
-  show, graph, context, protocol, new, mcp) run from a repository root.
+  show, graph, context, protocol, new, mcp) run from anywhere inside a
+  squared repository — read commands discover the repository root.
 nonGoals:
   - Business logic — every command is a thin wrapper over the library
   - Interactive prompts or TUI
@@ -15,7 +16,10 @@ contracts:
   consumes:
     - id: graph
       from: square://graph-loader
-      statement: Commands load the graph fresh from the current working directory.
+      statement: >
+        Read commands load the graph fresh from the discovered repository
+        root (walking up from the current working directory); init and new
+        act on the current working directory exactly.
     - id: packs
       from: square://context-compiler
       statement: "`squaring context <id>` prints the compiled pack verbatim."
@@ -46,6 +50,8 @@ authority:
   delegates: [help-text-wording]
 bindings:
   - src/cli.ts
+  - src/init.ts
+  - src/scaffold.ts
   - bin/squaring.mjs
 ---
 

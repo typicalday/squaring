@@ -115,6 +115,72 @@ test('decision supersededBy must name an existing decision', () => {
   assertHas(bad, 'error', /supersededBy nonexistent decision "d9"/);
 });
 
+test('a decision superseded by itself is an error', () => {
+  const bad = diagnose({
+    'squares/a.square.md': squareFile(
+      'a',
+      `decisions:
+  - id: d1
+    choice: one
+    supersededBy: d1
+`
+    )
+  });
+  assertHas(bad, 'error', /superseded by itself/);
+});
+
+test('decision from-provenance must name a done Change', () => {
+  const changeFile = (phase: string) => `---
+apiVersion: squaring/v0
+kind: Change
+id: c
+name: C
+type: evolution
+intent: i
+targets:
+  - square://a
+semanticDiff:
+  - added d1
+phase: ${phase}
+---
+`;
+  const decidedSquare = squareFile(
+    'a',
+    `decisions:
+  - id: d1
+    choice: one
+    from: change://c
+`
+  );
+
+  const missing = diagnose({ 'squares/a.square.md': decidedSquare });
+  assertHas(missing, 'error', /from change:\/\/c: Change does not exist/);
+
+  const notDone = diagnose({
+    'squares/a.square.md': decidedSquare,
+    'squares/changes/c.change.md': changeFile('active')
+  });
+  assertHas(notDone, 'error', /whose phase is "active" — decisions are promoted only when the Change is done/);
+
+  const done = diagnose({
+    'squares/a.square.md': decidedSquare,
+    'squares/changes/c.change.md': changeFile('done')
+  });
+  assert.equal(messagesOf(done, 'error').length, 0);
+});
+
+test('binding globs that are absolute or contain .. are errors', () => {
+  const absolute = diagnose({
+    'squares/a.square.md': squareFile('a', 'bindings:\n  - /etc/**\n')
+  });
+  assertHas(absolute, 'error', /binding "\/etc\/\*\*" must be a repo-relative glob without "\.\."/);
+
+  const escaping = diagnose({
+    'squares/a.square.md': squareFile('a', 'bindings:\n  - ../outside/**\n')
+  });
+  assertHas(escaping, 'error', /binding "\.\.\/outside\/\*\*" must be a repo-relative glob without "\.\."/);
+});
+
 test('semanticDiff emptiness rules per Change type', () => {
   const refactorWithDiff = diagnose({
     'squares/a.square.md': squareFile('a'),
@@ -268,6 +334,15 @@ commitments:
 `
   });
   assertHas(noAuthority, 'warning', /no authority block/);
+});
+
+test('a squares/PROTOCOL.md that differs from the shipped protocol warns', () => {
+  const stale = diagnose({
+    'squares/a.square.md': squareFile('a'),
+    'squares/PROTOCOL.md': 'old protocol text\n'
+  });
+  assertHas(stale, 'warning', /differs from the protocol shipped with this squaring version/);
+  assert.equal(messagesOf(stale, 'error').length, 0);
 });
 
 test('bindings that match no files warn', () => {

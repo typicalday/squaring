@@ -8,6 +8,9 @@ import { ID_RE } from './ids.ts';
 import { resolveSquaresDir, refuseSymlinkTarget } from './load.ts';
 import { CHANGE_TYPES } from './schema.ts';
 
+// User-supplied names are emitted with JSON.stringify: a JSON string is a
+// valid YAML double-quoted scalar, so quotes/newlines/colons in a name can't
+// break out of the `name:` field into other frontmatter keys.
 function titleCase(id: string): string {
   return id
     .split('-')
@@ -16,11 +19,12 @@ function titleCase(id: string): string {
 }
 
 export function squareTemplate(id: string, name?: string): string {
+  if (!ID_RE.test(id)) throw new Error(`invalid id "${id}" — expected [a-z0-9][a-z0-9-]*`);
   return `---
 apiVersion: squaring/v0
 kind: Square
 id: ${id}
-name: ${name ?? titleCase(id)}
+name: ${JSON.stringify(name ?? titleCase(id))}
 # archetype: capability   # capability | domain | platform | boundary | policy
 # partOf: <parent-square-id>
 purpose: >
@@ -66,11 +70,15 @@ Free-form notes, rationale, and examples go here.
 }
 
 export function changeTemplate(id: string, name?: string, type: string = 'evolution'): string {
+  if (!ID_RE.test(id)) throw new Error(`invalid id "${id}" — expected [a-z0-9][a-z0-9-]*`);
+  if (!(CHANGE_TYPES as readonly string[]).includes(type)) {
+    throw new Error(`invalid type "${type}" — expected ${CHANGE_TYPES.join(' | ')}`);
+  }
   return `---
 apiVersion: squaring/v0
 kind: Change
 id: ${id}
-name: ${name ?? titleCase(id)}
+name: ${JSON.stringify(name ?? titleCase(id))}
 type: ${type}                # evolution | refactor | repair | adoption
 intent: >
   TODO: what this Change is trying to accomplish and why.

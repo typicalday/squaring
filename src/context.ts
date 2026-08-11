@@ -3,10 +3,16 @@
 // boundaries, and commitments come before anything an LLM could plausibly
 // regenerate on its own.
 
-import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { claimUri, parseSquareUri, parseChangeUri } from './ids.ts';
-import { changesTargeting, type ChangeDoc, type Graph, type SquareDoc } from './load.ts';
+import { claimUri, parseSquareUri, parseChangeUri, resolveWikiLinks } from './ids.ts';
+import {
+  bindingMatches,
+  changesTargeting,
+  isConfinedBindingGlob,
+  type ChangeDoc,
+  type Graph,
+  type SquareDoc
+} from './load.ts';
 import type { Commitment } from './schema.ts';
 
 interface SuspensionNote {
@@ -74,9 +80,19 @@ function consumersOf(graph: Graph, squareId: string, contractId: string): Square
     .sort((a, b) => a.meta.id.localeCompare(b.meta.id));
 }
 
-function commitmentLine(c: Commitment, suspensions: Map<string, SuspensionNote[]>, squareId: string): string {
+/**
+ * One commitment bullet. `source` overrides the parenthetical reference —
+ * used when a policy Square's commitment is injected into another Square's
+ * pack, so the line points back at the owning policy claim.
+ */
+function commitmentLine(
+  c: Commitment,
+  suspensions: Map<string, SuspensionNote[]>,
+  squareId: string,
+  source?: string
+): string {
   const evidence = c.evidenceClass && c.evidenceClass !== 'none' ? `, evidence: ${c.evidenceClass}` : '';
-  let line = `- **[${c.kind}/${c.strength}]** ${c.statement.trim()} _(${c.id}${evidence})_`;
+  let line = `- **[${c.kind}/${c.strength}]** ${c.statement.trim()} _(${source ?? c.id}${evidence})_`;
   for (const s of suspensions.get(claimUri(squareId, 'commitment', c.id)) ?? []) {
     line += `\n  - ⚠ SUSPENDED by change://${s.changeId} — ${s.reason.trim()} Until: ${s.until.trim()}`;
   }
@@ -92,6 +108,7 @@ function renderChange(change: ChangeDoc, heading: string): string[] {
   const lines: string[] = [heading];
   lines.push(`- **Intent:** ${meta.intent.trim()}`);
   lines.push(`- **Type:** ${meta.type} · **Phase:** ${meta.phase}`);
+  if (meta.base?.codeRevision) lines.push(`- **Base:** ${meta.base.codeRevision}`);
   lines.push(
     meta.semanticDiff.length === 0
       ? '- **Semantic diff:** (empty — no meaning changes)'
@@ -172,7 +189,12 @@ export function compileSquarePack(graph: Graph, squareId: string, options?: { ab
     for (const c of boundaryCommitments) lines.push(commitmentLine(c, suspensions, meta.id));
     for (const { policy, commitment } of policies) {
       lines.push(
-        `- **[policy/${commitment.strength}]** ${commitment.statement.trim()} _(from square://${policy.meta.id}#commitment/${commitment.id})_`
+        commitmentLine(
+          commitment,
+          suspensions,
+          policy.meta.id,
+          `from square://${policy.meta.id}#commitment/${commitment.id}`
+        )
       );
     }
   }
@@ -185,8 +207,19 @@ export function compileSquarePack(graph: Graph, squareId: string, options?: { ab
   for (const c of otherCommitments) lines.push(commitmentLine(c, suspensions, meta.id));
   lines.push('');
 
-  // 4. Contracts
-  lines.push(abbreviated ? '### 4. Contracts' : '## 4. Contracts');
+  // 4. Scenarios
+  lines.push(abbreviated ? '### 4. Scenarios' : '## 4. Scenarios');
+  const scenarios = meta.scenarios ?? [];
+  if (scenarios.length === 0) lines.push('- (none declared)');
+  for (const s of scenarios) {
+    const evidence = s.evidenceClass && s.evidenceClass !== 'none' ? ` _(evidence: ${s.evidenceClass})_` : '';
+    lines.push(`- **${s.id}** — given: ${s.given.trim()} · when: ${s.when.trim()}${evidence}`);
+    for (const t of s.then) lines.push(`  - then: ${t.trim()}`);
+  }
+  lines.push('');
+
+  // 5. Contracts
+  lines.push(abbreviated ? '### 5. Contracts' : '## 5. Contracts');
   const provides = meta.contracts?.provides ?? [];
   const consumes = meta.contracts?.consumes ?? [];
   if (provides.length === 0 && consumes.length === 0) lines.push('- (none declared)');
@@ -212,8 +245,8 @@ export function compileSquarePack(graph: Graph, squareId: string, options?: { ab
   }
   lines.push('');
 
-  // 5. Ownership & authority
-  lines.push(abbreviated ? '### 5. Ownership & authority' : '## 5. Ownership & authority');
+  // 6. Ownership & authority
+  lines.push(abbreviated ? '### 6. Ownership & authority' : '## 6. Ownership & authority');
   if (meta.owns?.concepts?.length) lines.push(`- **Owns concepts:** ${meta.owns.concepts.join(', ')}`);
   if (meta.owns?.state?.length) lines.push(`- **Owns state:** ${meta.owns.state.join(', ')}`);
   if (meta.authority) {
@@ -229,22 +262,24 @@ export function compileSquarePack(graph: Graph, squareId: string, options?: { ab
   }
   lines.push('');
 
-  // 6. Decisions
-  lines.push(abbreviated ? '### 6. Decisions' : '## 6. Decisions');
+  // 7. Decisions
+  lines.push(abbreviated ? '### 7. Decisions' : '## 7. Decisions');
   const decisions = meta.decisions ?? [];
   const current = decisions.filter((d) => d.supersededBy == null);
   const superseded = decisions.filter((d) => d.supersededBy != null);
   if (decisions.length === 0) lines.push('- (none recorded)');
   for (const d of current) {
-    lines.push(`- **${d.id}${d.date ? ` (${d.date})` : ''}:** ${d.choice.trim()}${d.rationale ? ` — ${d.rationale.trim()}` : ''}`);
+    lines.push(
+      `- **${d.id}${d.date ? ` (${d.date})` : ''}:** ${d.choice.trim()}${d.rationale ? ` — ${d.rationale.trim()}` : ''}${d.from ? ` _(from ${d.from})_` : ''}`
+    );
   }
   if (superseded.length > 0) {
     lines.push(`- Superseded: ${superseded.map((d) => `${d.id} → ${d.supersededBy}`).join(', ')}`);
   }
   lines.push('');
 
-  // 7. Unresolved
-  lines.push(abbreviated ? '### 7. Unresolved questions' : '## 7. Unresolved questions');
+  // 8. Unresolved
+  lines.push(abbreviated ? '### 8. Unresolved questions' : '## 8. Unresolved questions');
   const unresolved = meta.unresolved ?? [];
   if (unresolved.length === 0) {
     lines.push('- (none)');
@@ -257,8 +292,8 @@ export function compileSquarePack(graph: Graph, squareId: string, options?: { ab
   lines.push('');
 
   if (!abbreviated) {
-    // 8. Active Changes
-    lines.push('## 8. Active Changes');
+    // 9. Active Changes
+    lines.push('## 9. Active Changes');
     const active = changesTargeting(graph, meta.id);
     if (active.length === 0) lines.push('- (none)');
     for (const change of active) {
@@ -266,17 +301,16 @@ export function compileSquarePack(graph: Graph, squareId: string, options?: { ab
     }
     lines.push('');
 
-    // 9. Source bindings
-    lines.push('## 9. Source bindings');
+    // 10. Source bindings
+    lines.push('## 10. Source bindings');
     const bindings = meta.bindings ?? [];
     if (bindings.length === 0) lines.push('- (none declared)');
     for (const glob of bindings) {
-      let matched: string[] = [];
-      try {
-        matched = fs.globSync(glob, { cwd: graph.rootDir }).sort();
-      } catch {
-        // leave empty
+      if (!isConfinedBindingGlob(glob)) {
+        lines.push(`- \`${glob}\` — skipped (must be a repo-relative glob without "..")`);
+        continue;
       }
+      const matched = bindingMatches(graph.rootDir, glob);
       const preview = matched.slice(0, 50);
       lines.push(`- \`${glob}\` — ${matched.length} file(s)`);
       for (const file of preview) lines.push(`  - ${file}`);
@@ -284,12 +318,13 @@ export function compileSquarePack(graph: Graph, squareId: string, options?: { ab
     }
     lines.push('');
 
-    // 10. Body
+    // 11. Body — [[wiki]] sugar resolved to canonical square:// URIs so the
+    // pack never depends on the reader knowing the authoring shorthand.
     const body = square.body.trim();
     if (body.length > 0) {
-      lines.push('## 10. Notes (Square body, verbatim)');
+      lines.push('## 11. Notes (Square body)');
       lines.push('');
-      lines.push(body);
+      lines.push(resolveWikiLinks(body));
       lines.push('');
     }
 
@@ -313,16 +348,19 @@ export function compileChangePack(graph: Graph, changeId: string): string {
   const body = change.body.trim();
   if (body.length > 0) {
     lines.push('');
-    lines.push('### Change notes (verbatim)');
+    lines.push('### Change notes');
     lines.push('');
-    lines.push(body);
+    lines.push(resolveWikiLinks(body));
   }
   lines.push('');
 
-  const targetIds = change.meta.targets
-    .map((t) => parseSquareUri(t)?.squareId)
-    .filter((t): t is string => t !== undefined && graph.squares.has(t))
-    .sort();
+  const targetIds = [
+    ...new Set(
+      change.meta.targets
+        .map((t) => parseSquareUri(t)?.squareId)
+        .filter((t): t is string => t !== undefined && graph.squares.has(t))
+    )
+  ].sort();
   lines.push(`## Targeted Squares (${targetIds.length})`);
   lines.push('');
   for (const targetId of targetIds) {

@@ -48,22 +48,38 @@ export function initRepo(rootDir: string): InitResult {
   // Register the MCP server in .mcp.json (project-scope config for agent CLIs).
   const mcpPath = path.join(rootDir, '.mcp.json');
   refuseSymlinkTarget(mcpPath, '.mcp.json');
-  let mcpConfig: { mcpServers?: Record<string, unknown> } = {};
+  const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+    typeof v === 'object' && v !== null && !Array.isArray(v);
+  let mcpConfig: Record<string, unknown> = {};
   let mcpExisted = false;
+  let mcpWritable = true;
   if (fs.existsSync(mcpPath)) {
     mcpExisted = true;
+    let parsed: unknown;
     try {
-      mcpConfig = JSON.parse(fs.readFileSync(mcpPath, 'utf8')) as typeof mcpConfig;
+      parsed = JSON.parse(fs.readFileSync(mcpPath, 'utf8'));
     } catch {
       result.notes.push('.mcp.json exists but is not valid JSON — left untouched; add the squaring server manually.');
-      mcpConfig = {};
-      mcpExisted = false; // prevent write below from clobbering the broken file
+      mcpWritable = false;
+    }
+    if (mcpWritable) {
+      // Valid JSON can still be the wrong shape (an array, a string, or a
+      // non-object mcpServers). Refuse to touch those rather than throw.
+      if (isPlainObject(parsed) && (parsed['mcpServers'] === undefined || isPlainObject(parsed['mcpServers']))) {
+        mcpConfig = parsed;
+      } else {
+        result.notes.push(
+          '.mcp.json exists but does not have the expected { "mcpServers": { ... } } shape — left untouched; add the squaring server manually.'
+        );
+        mcpWritable = false;
+      }
     }
   }
-  if (mcpExisted || !fs.existsSync(mcpPath)) {
-    mcpConfig.mcpServers ??= {};
-    if (mcpConfig.mcpServers['squaring'] === undefined) {
-      mcpConfig.mcpServers['squaring'] = { command: 'squaring', args: ['mcp'] };
+  if (mcpWritable) {
+    const servers = isPlainObject(mcpConfig['mcpServers']) ? mcpConfig['mcpServers'] : {};
+    mcpConfig['mcpServers'] = servers;
+    if (servers['squaring'] === undefined) {
+      servers['squaring'] = { command: 'squaring', args: ['mcp'] };
       fs.writeFileSync(mcpPath, JSON.stringify(mcpConfig, null, 2) + '\n');
       (mcpExisted ? result.updated : result.created).push('.mcp.json');
     }

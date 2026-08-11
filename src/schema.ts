@@ -72,6 +72,10 @@ const decisionSchema = z.strictObject({
     .optional(),
   choice: z.string().min(1),
   rationale: z.string().optional(),
+  // Provenance: the Change that promoted this decision (§9). Validation
+  // errors when that Change is missing or not done — promotion happens only
+  // at completion.
+  from: z.string().regex(/^change:\/\/[a-z0-9][a-z0-9-]*$/, 'expected a change://<id> URI').optional(),
   supersededBy: id.nullable().optional()
 });
 
@@ -79,7 +83,8 @@ const scenarioSchema = z.strictObject({
   id,
   given: z.string().min(1),
   when: z.string().min(1),
-  then: z.array(z.string().min(1)).min(1)
+  then: z.array(z.string().min(1)).min(1),
+  evidenceClass: z.enum(EVIDENCE_CLASSES).optional()
 });
 
 const unresolvedSchema = z.strictObject({

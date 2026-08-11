@@ -1,4 +1,4 @@
-// Public library surface of @typicalday/squaring.
+// Public library surface of the `squaring` npm package.
 
 export {
   ID_RE,
@@ -11,7 +11,8 @@ export {
   parseSquareUri,
   parseChangeUri,
   parseExternalUri,
-  extractBodyRefs
+  extractBodyRefs,
+  resolveWikiLinks
 } from './ids.ts';
 
 export {
@@ -31,6 +32,9 @@ export {
 export {
   loadGraph,
   resolveSquaresDir,
+  findRepoRoot,
+  isConfinedBindingGlob,
+  bindingMatches,
   activeChanges,
   changesTargeting,
   type Diagnostic,
@@ -49,4 +53,6 @@ export { initRepo, type InitResult } from './init.ts';
 
 export { PROTOCOL_MD } from './protocol.ts';
 
-export { startMcpServer } from './mcp.ts';
+export { createMcpServer, startMcpServer } from './mcp.ts';
+
+export { VERSION } from './version.ts';
