@@ -1,0 +1,62 @@
+{
+  "name": "@typicalday/squaring",
+  "version": "0.1.0",
+  "description": "Squaring — a semantic control plane for agent-built software: Squares, Changes, and compiled Context Packs.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/typicalday/squaring.git"
+  },
+  "homepage": "https://github.com/typicalday/squaring#readme",
+  "bugs": {
+    "url": "https://github.com/typicalday/squaring/issues"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "bin": {
+    "squaring": "bin/squaring.mjs"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "bin",
+    "docs/SPEC.md",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src test",
+    "clean": "rm -rf dist",
+    "build": "npm run clean && tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
+    "test": "node --test --test-reporter=spec test/*.test.ts",
+    "test:quiet": "node --test test/*.test.ts",
+    "check": "npm run typecheck && npm run lint && npm run build && npm run test:quiet"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "commander": "^14.0.0",
+    "yaml": "^2.8.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@types/node": "^22.0.0",
+    "eslint": "^9.0.0",
+    "globals": "^16.0.0",
+    "typescript": "^5.8.0",
+    "typescript-eslint": "^8.0.0"
+  }
+}
