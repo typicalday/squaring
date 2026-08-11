@@ -307,13 +307,13 @@ Installed into each repository as `squares/PROTOCOL.md` by `squaring init`; a co
 **Normative section order** — edges first, because sharp edges are what agents round away; generic descriptions are recoverable, edges are not:
 
 1. **Target identity** — name, purpose, `partOf` chain.
-2. **Non-goals and boundaries** — the target's `nonGoals` and boundary/`must-not` commitments, plus applicable policy-Square commitments (`appliesTo` matches).
+2. **Non-goals and boundaries** — the target's `nonGoals` and boundary-like commitments (kind `boundary`, or strength `must-not` / `should-not`), plus applicable policy-Square commitments (`appliesTo` matches).
 3. **Commitments** — remaining commitments with kind, strength, `evidenceClass`, and any active suspensions flagged inline.
 4. **Contracts** — provided (with each consumer Square named), consumed (with each provider named). One hop of counterparties: for each counterparty Square, its name, purpose, and the shared contract only.
 5. **Ownership and dependency directions** — `owns`, `authority`, `relationships`.
 6. **Decisions** — non-superseded decisions with rationale; superseded ones listed by title only.
 7. **Unresolved questions** — verbatim, prefixed with the A3 rule reminder.
-8. **Active Changes** — every non-`done` Change targeting the Square: intent, phase, `semanticDiff`, status, suspensions.
+8. **Active Changes** — every Change targeting the Square whose phase is neither `done` nor `abandoned`: intent, phase, `semanticDiff`, status, suspensions.
 9. **Source bindings** — the target's `bindings`, with matched file lists (top level only).
 10. **Body** — the Square's Markdown body verbatim.
 

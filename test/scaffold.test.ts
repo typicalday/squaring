@@ -7,7 +7,7 @@ import { validateGraph } from '../src/validate.ts';
 import { scaffoldSquare, scaffoldChange } from '../src/scaffold.ts';
 import { initRepo } from '../src/init.ts';
 import { PROTOCOL_MD } from '../src/protocol.ts';
-import { makeRepo, rmRepo, messagesOf } from './helpers.ts';
+import { makeRepo, rmRepo, messagesOf, squareFile } from './helpers.ts';
 
 test('scaffolded Square is schema-valid and validates with zero errors', () => {
   const root = makeRepo({});
@@ -43,6 +43,85 @@ test('scaffolded Change is schema-valid; its placeholder target fails referentia
     assert.throws(() => scaffoldChange(root, 'x', undefined, 'bogus'), /invalid type/);
   } finally {
     rmRepo(root);
+  }
+});
+
+test('scaffolding refuses to write through a symlinked squares dir escaping the repo', () => {
+  // Write-side of the symlink escape: without the realpath guard, scaffoldSquare
+  // would fs.writeFileSync into the external target, planting a file outside the
+  // repo. The guard in resolveSquaresDir must reject before any write happens.
+  const outside = makeRepo({});
+  const victim = makeRepo({ '.squaring.json': '{ "dir": "sq" }\n' });
+  try {
+    fs.symlinkSync(outside, path.join(victim, 'sq'), 'dir');
+    assert.throws(() => scaffoldSquare(victim, 'planted'), /outside the repository via a symlink/);
+    // Nothing was written into the external directory.
+    assert.deepEqual(fs.readdirSync(outside), []);
+  } finally {
+    rmRepo(victim);
+    rmRepo(outside);
+  }
+});
+
+test('scaffoldChange refuses to write through a symlinked changes/ subdirectory', () => {
+  // The reported round-4 critical: squares/ is a real, valid dir (resolveSquaresDir
+  // passes), but squares/changes is a symlink to an external directory. Without
+  // the changes/ guard, `new change` writes silently outside the repo, exit 0.
+  const outside = makeRepo({});
+  const victim = makeRepo({ 'squares/ok.square.md': squareFile('ok') });
+  try {
+    fs.symlinkSync(outside, path.join(victim, 'squares', 'changes'), 'dir');
+    assert.throws(() => scaffoldChange(victim, 'newchange'), /is a symlink; refusing to write through it/);
+    assert.deepEqual(fs.readdirSync(outside), [], 'nothing written into the external dir');
+  } finally {
+    rmRepo(victim);
+    rmRepo(outside);
+  }
+});
+
+test('scaffoldChange refuses a pre-placed dangling symlink at the change-file path', () => {
+  // squares/ and squares/changes are real, but the leaf is a DANGLING symlink to
+  // an external path. fs.existsSync reports false for a dangling link, so the
+  // "already exists" check misses it and writeFileSync would create the external
+  // target. The leaf guard must reject first.
+  const outside = makeRepo({});
+  const target = path.join(outside, 'escaped.change.md');
+  const victim = makeRepo({ 'squares/ok.square.md': squareFile('ok') });
+  try {
+    fs.mkdirSync(path.join(victim, 'squares', 'changes'));
+    fs.symlinkSync(target, path.join(victim, 'squares', 'changes', 'planted.change.md'), 'file');
+    assert.throws(() => scaffoldChange(victim, 'planted'), /is a symlink; refusing to write through it/);
+    assert.ok(!fs.existsSync(target), 'nothing written through the dangling symlink');
+  } finally {
+    rmRepo(victim);
+    rmRepo(outside);
+  }
+});
+
+test('scaffoldSquare refuses a pre-placed dangling symlink at the square-file path', () => {
+  const outside = makeRepo({});
+  const target = path.join(outside, 'escaped.square.md');
+  const victim = makeRepo({ 'squares/ok.square.md': squareFile('ok') });
+  try {
+    fs.symlinkSync(target, path.join(victim, 'squares', 'planted.square.md'), 'file');
+    assert.throws(() => scaffoldSquare(victim, 'planted'), /is a symlink; refusing to write through it/);
+    assert.ok(!fs.existsSync(target), 'nothing written through the dangling symlink');
+  } finally {
+    rmRepo(victim);
+    rmRepo(outside);
+  }
+});
+
+test('initRepo refuses a symlinked changes/ directory', () => {
+  const outside = makeRepo({});
+  const victim = makeRepo({ 'squares/ok.square.md': squareFile('ok') });
+  try {
+    fs.symlinkSync(outside, path.join(victim, 'squares', 'changes'), 'dir');
+    assert.throws(() => initRepo(victim), /is a symlink; refusing to write through it/);
+    assert.deepEqual(fs.readdirSync(outside), [], 'nothing written into the external dir');
+  } finally {
+    rmRepo(victim);
+    rmRepo(outside);
   }
 });
 

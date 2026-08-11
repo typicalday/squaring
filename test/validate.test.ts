@@ -1,8 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { loadGraph } from '../src/load.ts';
 import { validateGraph, hasErrors, formatDiagnostics } from '../src/validate.ts';
-import { DEMO, diagnose, squareFile, assertHas, messagesOf } from './helpers.ts';
+import { DEMO, diagnose, squareFile, assertHas, messagesOf, makeRepo, rmRepo } from './helpers.ts';
 
 test('the demo fixture validates with zero errors and zero warnings', () => {
   const diagnostics = validateGraph(loadGraph(DEMO));
@@ -273,4 +276,41 @@ test('bindings that match no files warn', () => {
   });
   assertHas(diagnostics, 'warning', /matches no files/);
   assert.equal(messagesOf(diagnostics, 'error').length, 0);
+});
+
+test('a hostile squares dir name never reaches a shell (command-injection regression)', () => {
+  // The stale-blocked check runs `git log` on a path derived from the
+  // .squaring.json dir. With the old shell-string execSync, this dir name
+  // would have executed the embedded `touch` and created the marker file.
+  const marker = path.join(os.tmpdir(), `squaring-rce-marker-${process.pid}`);
+  fs.rmSync(marker, { force: true });
+  const evilDir = `sq"; touch ${marker}; echo "`;
+  const root = makeRepo({
+    '.squaring.json': JSON.stringify({ dir: evilDir }),
+    [`${evilDir}/a.square.md`]: squareFile('a'),
+    [`${evilDir}/changes/b.change.md`]: `---
+apiVersion: squaring/v0
+kind: Change
+id: b
+name: B
+type: repair
+intent: i
+targets:
+  - square://a
+semanticDiff: []
+phase: blocked
+status:
+  blocked:
+    - reason: waiting on something
+---
+`
+  });
+  try {
+    const diagnostics = validateGraph(loadGraph(root));
+    assert.equal(messagesOf(diagnostics, 'error').length, 0);
+    assert.ok(!fs.existsSync(marker), 'shell injection executed: marker file was created');
+  } finally {
+    fs.rmSync(marker, { force: true });
+    rmRepo(root);
+  }
 });

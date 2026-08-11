@@ -6,7 +6,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { resolveSquaresDir } from './load.ts';
+import { resolveSquaresDir, refuseSymlinkTarget } from './load.ts';
 import { PROTOCOL_MD } from './protocol.ts';
 
 export interface InitResult {
@@ -21,6 +21,12 @@ export function initRepo(rootDir: string): InitResult {
   const absSquares = path.join(rootDir, dir);
   const absChanges = path.join(absSquares, 'changes');
 
+  // resolveSquaresDir realpath-validates the top-level squares dir; guard every
+  // nested write target below it (the changes/ subdir and the leaf files this
+  // function creates) so a hostile clone cannot pre-place a symlink that
+  // redirects a write outside the repository.
+  refuseSymlinkTarget(absChanges, `${dir}/changes`);
+
   if (!fs.existsSync(absSquares)) {
     fs.mkdirSync(absSquares, { recursive: true });
     result.created.push(`${dir}/`);
@@ -31,6 +37,7 @@ export function initRepo(rootDir: string): InitResult {
   }
 
   const protocolPath = path.join(absSquares, 'PROTOCOL.md');
+  refuseSymlinkTarget(protocolPath, `${dir}/PROTOCOL.md`);
   const existed = fs.existsSync(protocolPath);
   const current = existed ? fs.readFileSync(protocolPath, 'utf8') : null;
   if (current !== PROTOCOL_MD) {
@@ -40,6 +47,7 @@ export function initRepo(rootDir: string): InitResult {
 
   // Register the MCP server in .mcp.json (project-scope config for agent CLIs).
   const mcpPath = path.join(rootDir, '.mcp.json');
+  refuseSymlinkTarget(mcpPath, '.mcp.json');
   let mcpConfig: { mcpServers?: Record<string, unknown> } = {};
   let mcpExisted = false;
   if (fs.existsSync(mcpPath)) {

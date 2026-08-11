@@ -2,7 +2,7 @@
 // returns load diagnostics plus integrity errors and warnings.
 
 import fs from 'node:fs';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { extractBodyRefs, parseSquareUri, parseExternalUri } from './ids.ts';
 import { changesTargeting, type Diagnostic, type Graph, type SquareDoc } from './load.ts';
 
@@ -219,7 +219,9 @@ function checkChanges(graph: Graph, out: Diagnostic[]): void {
 
 function lastCommitAgeDays(rootDir: string, relFile: string): number | null {
   try {
-    const output = execSync(`git log -1 --format=%ct -- "${relFile}"`, {
+    // execFileSync with an argument array: relFile derives from the
+    // .squaring.json-configurable dir and must never reach a shell.
+    const output = execFileSync('git', ['log', '-1', '--format=%ct', '--', relFile], {
       cwd: rootDir,
       stdio: ['ignore', 'pipe', 'ignore']
     })

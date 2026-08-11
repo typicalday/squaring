@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ID_RE } from './ids.ts';
-import { resolveSquaresDir } from './load.ts';
+import { resolveSquaresDir, refuseSymlinkTarget } from './load.ts';
 import { CHANGE_TYPES } from './schema.ts';
 
 function titleCase(id: string): string {
@@ -111,6 +111,9 @@ export function scaffoldSquare(rootDir: string, id: string, name?: string): Scaf
   const dir = resolveSquaresDir(rootDir);
   const rel = path.join(dir, `${id}.square.md`);
   const abs = path.join(rootDir, rel);
+  // The squares dir is realpath-validated by resolveSquaresDir; guard the leaf
+  // so a pre-placed (possibly dangling) symlink can't redirect the write out.
+  refuseSymlinkTarget(abs, rel);
   if (fs.existsSync(abs)) throw new Error(`${rel} already exists`);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, squareTemplate(id, name));
@@ -125,6 +128,12 @@ export function scaffoldChange(rootDir: string, id: string, name?: string, type 
   const dir = resolveSquaresDir(rootDir);
   const rel = path.join(dir, 'changes', `${id}.change.md`);
   const abs = path.join(rootDir, rel);
+  // resolveSquaresDir only validates the top-level squares dir. Guard the
+  // nested changes/ directory (a symlinked changes/ would let writeFileSync
+  // write straight through it) and the leaf file (a pre-placed dangling symlink
+  // would be followed on create), both of which it never inspects.
+  refuseSymlinkTarget(path.dirname(abs), path.join(dir, 'changes'));
+  refuseSymlinkTarget(abs, rel);
   if (fs.existsSync(abs)) throw new Error(`${rel} already exists`);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, changeTemplate(id, name, type));

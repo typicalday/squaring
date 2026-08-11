@@ -62,6 +62,54 @@ test('square pack injects applicable policies, suspensions, and counterparties',
   assert.ok(orders.includes('partial-refunds'));
 });
 
+test('should-not commitments sort into section 2, and abandoned Changes are excluded from section 8', () => {
+  const root = makeRepo({
+    'squares/a.square.md': `---
+apiVersion: squaring/v0
+kind: Square
+id: a
+name: Square a
+purpose: Test square a.
+nonGoals:
+  - nothing in particular
+commitments:
+  - id: soft-edge
+    kind: constraint
+    strength: should-not
+    statement: avoid coupling to the renderer
+authority:
+  owns: [invariants]
+---
+`,
+    'squares/changes/dead.change.md': `---
+apiVersion: squaring/v0
+kind: Change
+id: dead
+name: Dead
+type: evolution
+intent: abandoned experiment
+targets:
+  - square://a
+semanticDiff:
+  - tried a thing
+phase: abandoned
+---
+`
+  });
+  try {
+    const graph = loadGraph(root);
+    assert.deepEqual(graph.diagnostics, []);
+    const pack = compileSquarePack(graph, 'a');
+    // should-not is boundary-like → section 2, ahead of section 3.
+    assert.ok(pack.indexOf('soft-edge') < pack.indexOf('## 3. Commitments'));
+    // An abandoned Change is neither "active" nor listed; section 8 is empty.
+    assert.ok(!pack.includes('change://dead'));
+    assert.match(pack.slice(pack.indexOf('## 8. Active Changes')), /## 8\. Active Changes\n- \(none\)/);
+  } finally {
+    rmRepo(root);
+  }
+});
+
 test('change pack embeds abbreviated packs for each target', () => {
   const graph = loadGraph(DEMO);
   const pack = compileChangePack(graph, 'add-refunds');

@@ -4,7 +4,7 @@
 // regenerate on its own.
 
 import fs from 'node:fs';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { claimUri, parseSquareUri, parseChangeUri } from './ids.ts';
 import { changesTargeting, type ChangeDoc, type Graph, type SquareDoc } from './load.ts';
 import type { Commitment } from './schema.ts';
@@ -118,7 +118,7 @@ function renderChange(change: ChangeDoc, heading: string): string[] {
 
 function gitRevision(rootDir: string): string | null {
   try {
-    const rev = execSync('git rev-parse --short HEAD', { cwd: rootDir, stdio: ['ignore', 'pipe', 'ignore'] })
+    const rev = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: rootDir, stdio: ['ignore', 'pipe', 'ignore'] })
       .toString()
       .trim();
     return rev.length > 0 ? rev : null;

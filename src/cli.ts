@@ -21,7 +21,13 @@ function fail(message: string): never {
 }
 
 function loadOrFail(): Graph {
-  const graph = loadGraph(process.cwd());
+  let graph: Graph;
+  try {
+    graph = loadGraph(process.cwd());
+  } catch (err) {
+    // e.g. a malformed or out-of-bounds .squaring.json — a diagnostic, not a stack trace
+    fail(err instanceof Error ? err.message : String(err));
+  }
   // Loading itself only fails hard when the squares directory is missing;
   // per-file errors surface through `validate` and stay visible in other
   // commands' output paths.
@@ -44,7 +50,12 @@ program
   .command('init')
   .description('Create the squares/ layout, install PROTOCOL.md, and register the MCP server in .mcp.json')
   .action(() => {
-    const result = initRepo(process.cwd());
+    let result: ReturnType<typeof initRepo>;
+    try {
+      result = initRepo(process.cwd());
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err));
+    }
     for (const f of result.created) process.stdout.write(`created ${f}\n`);
     for (const f of result.updated) process.stdout.write(`updated ${f}\n`);
     if (result.created.length === 0 && result.updated.length === 0) {
