@@ -36,7 +36,7 @@ itself squared — see [squares/](squares/).
 ## Quickstart on one of your repos
 
 ```bash
-npm install -g @typicalday/squaring
+npm install -g squaring
 ```
 
 ```bash
