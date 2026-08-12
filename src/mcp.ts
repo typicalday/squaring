@@ -6,6 +6,7 @@
 // subdirectory lands in the existing repo instead of starting a second one.
 // Tool errors return `isError: true` rather than throwing, so the agent sees
 // the message.
+// @sq mcp-server#concept/tool-surface -- every registered tool, its input shape and its return shape
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,6 +16,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import * as z from 'zod';
 import { loadGraph, activeChanges, findRepoRoot, type Graph } from './load.ts';
 import { validateGraph, formatDiagnostics } from './validate.ts';
+import { buildSourceMap } from './sources.ts';
+import { indexJson } from './indexing.ts';
 import { compileContext } from './context.ts';
 import { scaffoldSquare, scaffoldChange } from './scaffold.ts';
 import { PROTOCOL_MD } from './protocol.ts';
@@ -164,12 +167,39 @@ export function createMcpServer(options?: { rootDir?: string }): McpServer {
     'context_pack',
     {
       description:
-        'Compile the Context Pack for a Square or Change — the read-optimized brief (purpose, non-goals, commitments, contracts, decisions, unresolved questions, active Changes). Read it before reading code.',
+        'Compile the Context Pack for a Square, a Change, or one concept of a Square — the read-optimized brief (purpose, concept map, non-goals, commitments, contracts, decisions, unresolved questions, active Changes, sources). Read it before reading code.',
       inputSchema: {
-        id: z.string().describe('Square or Change id, or an explicit square://<id> / change://<id> URI')
+        id: z
+          .string()
+          .describe(
+            'Square or Change id, or an explicit square://<id> / change://<id> / <square>#concept/<id> URI (a concept URI compiles the concept-scoped pack)'
+          )
       }
     },
     ({ id }) => withGraph((graph) => compileContext(graph, id))
+  );
+
+  server.registerTool(
+    'index',
+    {
+      description:
+        'The source map (SPEC §15.6). No argument: the forward map for the whole graph — every Square, its concepts and their claims, with matched files and anchor sites. `target`: the same scoped to one Square id, concept URI or claim URI. `file`: the reverse map — which Squares, concepts and claims govern that file. Run the reverse lookup before editing a file you did not map yourself. Always returns the JSON entry shape.',
+      inputSchema: {
+        target: z
+          .string()
+          .optional()
+          .describe('Square id, concept URI or claim URI (short or full form); mutually exclusive with `file`'),
+        file: z.string().optional().describe('repo-relative path; mutually exclusive with `target`')
+      }
+    },
+    ({ target, file }) =>
+      withGraph((graph) => {
+        const query = {
+          ...(target === undefined ? {} : { target }),
+          ...(file === undefined ? {} : { file })
+        };
+        return JSON.stringify(indexJson(graph, buildSourceMap(graph), query), null, 2);
+      })
   );
 
   server.registerTool(
@@ -216,6 +246,7 @@ export function createMcpServer(options?: { rootDir?: string }): McpServer {
   return server;
 }
 
+// @sq mcp-server#concept/stdio-transport -- stdout is protocol, stderr is the only log channel
 export async function startMcpServer(): Promise<void> {
   const server = createMcpServer();
   const transport = new StdioServerTransport();

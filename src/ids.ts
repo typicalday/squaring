@@ -1,4 +1,5 @@
 // Identity and link grammar — SPEC §5.
+// @sq resource-model#concept/uri-grammar -- ids, square:// and change:// URIs, claim URIs, concept URIs, [[wiki]] links
 
 export const ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 
@@ -9,10 +10,15 @@ export interface SquareRef {
   squareId: string;
   facet?: ClaimFacet;
   claimId?: string;
+  /** set instead of facet/claimId for a concept URI: square://<id>#concept/<cid> (§5, §14.2) */
+  conceptId?: string;
 }
 
+// `concept` is a fragment kind alongside the five claim facets (§5, §14.2).
+// It is deliberately *not* a member of CLAIM_FACETS: a concept is not a claim,
+// so nothing that consumes a facet (suspensions, evidenceClass) can reach it.
 const SQUARE_URI_RE =
-  /^square:\/\/([a-z0-9][a-z0-9-]*)(?:#(commitment|contract|decision|scenario|unresolved)\/([a-z0-9][a-z0-9-]*))?$/;
+  /^square:\/\/([a-z0-9][a-z0-9-]*)(?:#(commitment|contract|decision|scenario|unresolved|concept)\/([a-z0-9][a-z0-9-]*))?$/;
 const CHANGE_URI_RE = /^change:\/\/([a-z0-9][a-z0-9-]*)$/;
 const EXTERNAL_URI_RE = /^external:\/\/([a-z0-9][a-z0-9-]*)$/;
 
@@ -28,11 +34,17 @@ export function claimUri(squareId: string, facet: ClaimFacet, claimId: string): 
   return `square://${squareId}#${facet}/${claimId}`;
 }
 
+export function conceptUri(squareId: string, conceptId: string): string {
+  return `square://${squareId}#concept/${conceptId}`;
+}
+
 export function parseSquareUri(uri: string): SquareRef | null {
   const m = SQUARE_URI_RE.exec(uri);
   if (!m) return null;
   const ref: SquareRef = { squareId: m[1]! };
-  if (m[2]) {
+  if (m[2] === 'concept') {
+    ref.conceptId = m[3]!;
+  } else if (m[2]) {
     ref.facet = m[2] as ClaimFacet;
     ref.claimId = m[3]!;
   }
@@ -57,6 +69,12 @@ export interface BodyRefs {
 }
 
 const WIKI_RE = /\[\[([a-z0-9][a-z0-9-]*)\]\]/g;
+// The fragment kind is matched loosely (`[a-z]+`, not the closed set) on
+// purpose: a prose URI with a misspelled fragment kind is still extracted, so
+// resolveRef reports it as a broken reference (§11 error 3) instead of the
+// scanner silently dropping it. `#concept/` is inside that loose set and is
+// now a valid kind — parseSquareUri accepts it (§5, §14.2), which is what
+// keeps a legitimate concept link in prose from being rejected as malformed.
 const URI_IN_PROSE_RE = /square:\/\/[a-z0-9][a-z0-9-]*(?:#[a-z]+\/[a-z0-9][a-z0-9-]*)?/g;
 
 /** Extract addressable references from a Markdown body (SPEC §5, §11 error 3). */

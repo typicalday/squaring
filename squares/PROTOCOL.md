@@ -5,14 +5,17 @@ software is supposed to mean (Squares); `changes/*.change.md` files describe
 work in motion (Changes). If you are an agent working in this repository, you
 are expected to follow the rules below. Tooling: the `squaring` CLI, or the
 `squaring` MCP server (tools: `list_squares`, `get_square`, `get_change`,
-`get_graph`, `validate`, `context_pack`, `scaffold_square`,
+`get_graph`, `validate`, `context_pack`, `index`, `scaffold_square`,
 `scaffold_change`, `get_protocol`).
 
 ## Before you start
 
 1. Run `context_pack` (or `squaring context <id>`) for the Square or Change
    you are working on. Read it before reading code.
-2. Run `validate` after any edit to a `.square.md` or `.change.md` file.
+2. Run `index` with a `file` (or `squaring index --file <path>`) before
+   editing a file you did not map yourself: it names every Square, concept and
+   claim that governs the file, which is what A2 and A7 need.
+3. Run `validate` after any edit to a `.square.md` or `.change.md` file.
 
 ## The rules
 
@@ -47,7 +50,8 @@ are expected to follow the rules below. Tooling: the `squaring` CLI, or the
   commitment is recorded on the Change as an override with the human's stated
   reason; do not restate the override as your own conclusion.
 - **A9 — Context Packs are inputs, not truth.** Act on the graph and the
-  repository; a stale pack is regenerated, never hand-edited.
+  repository; a stale pack is regenerated, never hand-edited. The `index`
+  output is derived the same way and has the same standing.
 
 ## Change lifecycle
 

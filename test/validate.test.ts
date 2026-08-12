@@ -169,16 +169,29 @@ phase: ${phase}
   assert.equal(messagesOf(done, 'error').length, 0);
 });
 
-test('binding globs that are absolute or contain .. are errors', () => {
+test('sources globs that are absolute or contain .. are errors (§11 error 8)', () => {
   const absolute = diagnose({
-    'squares/a.square.md': squareFile('a', 'bindings:\n  - /etc/**\n')
+    'squares/a.square.md': squareFile('a', 'sources:\n  - glob: /etc/**\n')
   });
-  assertHas(absolute, 'error', /binding "\/etc\/\*\*" must be a repo-relative glob without "\.\."/);
+  assertHas(absolute, 'error', /sources glob "\/etc\/\*\*" on square:\/\/a must be a repo-relative glob without "\.\."/);
 
   const escaping = diagnose({
-    'squares/a.square.md': squareFile('a', 'bindings:\n  - ../outside/**\n')
+    'squares/a.square.md': squareFile('a', 'sources:\n  - glob: ../outside/**\n')
   });
-  assertHas(escaping, 'error', /binding "\.\.\/outside\/\*\*" must be a repo-relative glob without "\.\."/);
+  assertHas(
+    escaping,
+    'error',
+    /sources glob "\.\.\/outside\/\*\*" on square:\/\/a must be a repo-relative glob without "\.\."/
+  );
+
+  // A concept-scoped selector is checked the same way and names its concept.
+  const onConcept = diagnose({
+    'squares/a.square.md': squareFile(
+      'a',
+      'owns:\n  concepts:\n    - id: c\n      statement: s\n      sources:\n        - glob: /etc/**\n'
+    )
+  });
+  assertHas(onConcept, 'error', /sources glob "\/etc\/\*\*" on square:\/\/a#concept\/c must be a repo-relative glob/);
 });
 
 test('semanticDiff emptiness rules per Change type', () => {
@@ -345,12 +358,309 @@ test('a squares/PROTOCOL.md that differs from the shipped protocol warns', () =>
   assert.equal(messagesOf(stale, 'error').length, 0);
 });
 
-test('bindings that match no files warn', () => {
+test('sources globs that match no files warn (§11 warning 3)', () => {
   const diagnostics = diagnose({
-    'squares/a.square.md': squareFile('a', 'bindings:\n  - src/nothing-here/**\n')
+    'squares/a.square.md': squareFile('a', 'sources:\n  - glob: src/nothing-here/**\n')
   });
-  assertHas(diagnostics, 'warning', /matches no files/);
+  assertHas(diagnostics, 'warning', /sources glob "src\/nothing-here\/\*\*" on square:\/\/a matches no files/);
   assert.equal(messagesOf(diagnostics, 'error').length, 0);
+
+  const onConcept = diagnose({
+    'squares/a.square.md': squareFile(
+      'a',
+      'owns:\n  concepts:\n    - id: c\n      statement: s\n      sources:\n        - glob: src/nothing-here/**\n'
+    )
+  });
+  assertHas(onConcept, 'warning', /on square:\/\/a#concept\/c matches no files/);
+});
+
+test('`bindings` is reported with its `sources` rewrite (§11 error 12)', () => {
+  const withGlobs = diagnose({
+    'squares/a.square.md': squareFile('a', 'bindings:\n  - src/**\n  - lib/*.ts\n')
+  });
+  assertHas(
+    withGlobs,
+    'error',
+    /`bindings` is removed, replaced by `sources` — move "src\/\*\*", "lib\/\*\.ts" under `sources:`, one `- glob: <glob>` entry each \(SPEC §15\.7, §11 error 12\)/
+  );
+
+  // The rewrite is the whole point of the dedicated error: `bindings` must not
+  // fall through to the generic strict-unknown-field message.
+  assert.equal(
+    messagesOf(withGlobs, 'error').some((m) => /unrecognized key/i.test(m)),
+    false
+  );
+
+  const empty = diagnose({ 'squares/a.square.md': squareFile('a', 'bindings: []\n') });
+  assertHas(empty, 'error', /use `sources:` with `- glob: <glob>` entries instead/);
+});
+
+test('concept tags must resolve inside the declaring Square (§11 error 9)', () => {
+  const undeclared = diagnose({
+    'squares/a.square.md': squareFile(
+      'a',
+      'owns:\n  concepts:\n    - id: known\n      statement: s\ndecisions:\n  - id: d\n    date: 2026-01-01\n    choice: c\n    concepts: [ghost]\n'
+    )
+  });
+  assertHas(
+    undeclared,
+    'error',
+    /decision "d" is tagged with concept "ghost", which square:\/\/a does not declare — concept tags never resolve across Squares/
+  );
+
+  // Cross-Square tagging does not exist: b declaring the concept does not help a.
+  const crossSquare = diagnose({
+    'squares/a.square.md': squareFile(
+      'a',
+      'scenarios:\n  - id: s1\n    given: g\n    when: w\n    then: [t]\n    concepts: [owned-by-b]\n'
+    ),
+    'squares/b.square.md': squareFile(
+      'b',
+      'owns:\n  concepts:\n    - id: owned-by-b\n      statement: s\n      sources:\n        - glob: "**/*"\n'
+    )
+  });
+  assertHas(
+    crossSquare,
+    'error',
+    /scenario "s1" is tagged with concept "owned-by-b", which square:\/\/a does not declare/
+  );
+});
+
+test('duplicate concept ids are an error (§11 error 9)', () => {
+  const diagnostics = diagnose({
+    'squares/a.square.md': squareFile(
+      'a',
+      'owns:\n  concepts:\n    - id: dup\n      statement: one\n    - id: dup\n      statement: two\ndecisions:\n  - id: d\n    date: 2026-01-01\n    choice: c\n    concepts: [dup]\n'
+    )
+  });
+  assertHas(diagnostics, 'error', /duplicate concept id "dup" in owns\.concepts \(SPEC §14\.2, §11 error 9\)/);
+});
+
+test('a concept nothing points at is inert (§11 warning 6)', () => {
+  const inert = diagnose({
+    'squares/a.square.md': squareFile('a', 'owns:\n  concepts:\n    - id: lonely\n      statement: s\n')
+  });
+  assertHas(
+    inert,
+    'warning',
+    /concept "lonely" is inert — no claim is tagged with it, no selector is scoped to it, and no anchor targets it/
+  );
+
+  // Any one of the three pointers clears it. A tagged claim:
+  const tagged = diagnose({
+    'squares/a.square.md': squareFile(
+      'a',
+      'owns:\n  concepts:\n    - id: used\n      statement: s\ncommitments:\n  - id: c2\n    kind: invariant\n    strength: must\n    statement: s\n    concepts: [used]\n'
+    )
+  });
+  assert.equal(messagesOf(tagged, 'warning').length, 0);
+
+  // A concept-scoped selector (which matches, so warning 3 stays quiet):
+  const scoped = diagnose({
+    'squares/a.square.md': squareFile(
+      'a',
+      'owns:\n  concepts:\n    - id: used\n      statement: s\n      sources:\n        - glob: src/thing.ts\n'
+    ),
+    'src/thing.ts': 'export const x = 1;\n'
+  });
+  assert.equal(messagesOf(scoped, 'warning').length, 0);
+
+  // An anchor targeting it:
+  const anchored = diagnose({
+    'squares/a.square.md': squareFile('a', 'owns:\n  concepts:\n    - id: used\n      statement: s\n'),
+    'src/thing.ts': '// @sq a#concept/used\nexport const x = 1;\n'
+  });
+  assert.equal(messagesOf(anchored, 'warning').length, 0);
+});
+
+test('malformed, dangling and ambiguous anchors are errors (§11 error 10)', () => {
+  const malformed = diagnose({
+    'squares/a.square.md': squareFile('a'),
+    'src/thing.ts': '// @sq Not-An-Id\n'
+  });
+  assertHas(
+    malformed,
+    'error',
+    /malformed anchor target "Not-An-Id": not a square:\/\/ URI, a <square>#<kind>\/<id> reference, or a bare id/
+  );
+
+  const emptyTarget = diagnose({
+    'squares/a.square.md': squareFile('a'),
+    'src/thing.ts': '// @sq\n'
+  });
+  assertHas(emptyTarget, 'error', /malformed anchor: empty target — write `@sq` then one target/);
+
+  const dangling = diagnose({
+    'squares/a.square.md': squareFile('a'),
+    'src/thing.ts': '// @sq ghost\n'
+  });
+  assertHas(dangling, 'error', /dangling anchor "ghost": no Square or concept named "ghost"/);
+
+  const noSuchConcept = diagnose({
+    'squares/a.square.md': squareFile('a'),
+    'src/thing.ts': '// @sq a#concept/ghost\n'
+  });
+  assertHas(noSuchConcept, 'error', /dangling anchor "a#concept\/ghost": square:\/\/a declares no concept "ghost"/);
+
+  const noSuchClaim = diagnose({
+    'squares/a.square.md': squareFile('a'),
+    'src/thing.ts': '// @sq a#commitment/ghost\n'
+  });
+  assertHas(noSuchClaim, 'error', /dangling anchor "a#commitment\/ghost": square:\/\/a has no commitment "ghost"/);
+
+  // A bare id naming both a Square and a concept resolves to neither.
+  const ambiguous = diagnose({
+    'squares/a.square.md': squareFile('a'),
+    'squares/b.square.md': squareFile(
+      'b',
+      'owns:\n  concepts:\n    - id: a\n      statement: s\n      sources:\n        - glob: src/thing.ts\n'
+    ),
+    'src/thing.ts': '// @sq a\n'
+  });
+  assertHas(
+    ambiguous,
+    'error',
+    /ambiguous anchor "a": names 2 targets \(square:\/\/a, square:\/\/b#concept\/a\) — spell the URI/
+  );
+});
+
+test('`expect: annotated` requires an anchor into the declaring Square (§11 error 11)', () => {
+  const uncovered = diagnose({
+    'squares/a.square.md': squareFile('a', 'sources:\n  - glob: src/*.ts\n    expect: annotated\n'),
+    'src/thing.ts': 'export const x = 1;\n'
+  });
+  assertHas(
+    uncovered,
+    'error',
+    /no anchor resolving into square:\/\/a, required by its `expect: annotated` selector "src\/\*\.ts"/
+  );
+
+  // An anchor on any of the Square's own targets satisfies it — here a claim.
+  const covered = diagnose({
+    'squares/a.square.md': squareFile('a', 'sources:\n  - glob: src/*.ts\n    expect: annotated\n'),
+    'src/thing.ts': '// @sq a#commitment/base\nexport const x = 1;\n'
+  });
+  assert.equal(messagesOf(covered, 'error').length, 0);
+
+  // An anchor into a *different* Square does not satisfy it.
+  const wrongSquare = diagnose({
+    'squares/a.square.md': squareFile('a', 'sources:\n  - glob: src/*.ts\n    expect: annotated\n'),
+    'squares/b.square.md': squareFile('b'),
+    'src/thing.ts': '// @sq b\nexport const x = 1;\n'
+  });
+  assertHas(wrongSquare, 'error', /no anchor resolving into square:\/\/a/);
+});
+
+test('validate runs the anchor scan on every invocation', () => {
+  // Error 10 comes only from the scan: if `validate` skipped it, a repo whose
+  // graph is internally perfect but whose realization carries a broken anchor
+  // would report clean.
+  const diagnostics = diagnose({
+    'squares/a.square.md': squareFile('a'),
+    'src/thing.ts': '// @sq square://ghost\n'
+  });
+  assertHas(diagnostics, 'error', /dangling anchor "square:\/\/ghost": Square "ghost" does not exist/);
+  assert.equal(diagnostics.some((d) => d.file === 'src/thing.ts' && d.line === 1), true);
+});
+
+test('suspensions still accept claim URIs only — a concept is not suspendable', () => {
+  const change = (claim: string) => `---
+apiVersion: squaring/v0
+kind: Change
+id: c
+name: C
+type: repair
+intent: i
+targets:
+  - square://a
+semanticDiff: []
+phase: active
+suspensions:
+  - claim: ${claim}
+    reason: r
+    until: 2030-01-01
+---
+`;
+  const onConcept = diagnose({
+    'squares/a.square.md': squareFile(
+      'a',
+      'owns:\n  concepts:\n    - id: c1\n      statement: s\ndecisions:\n  - id: d\n    date: 2026-01-01\n    choice: c\n    concepts: [c1]\n'
+    ),
+    'squares/changes/c.change.md': change('square://a#concept/c1')
+  });
+  // The claim-URI regex never widened to `#concept/`: a concept URI is rejected
+  // by the schema, before validate.ts ever sees the suspension.
+  assertHas(onConcept, 'error', /suspensions\.0\.claim: expected a square:\/\/<id>#<facet>\/<claim-id> URI/);
+
+  const onCommitment = diagnose({
+    'squares/a.square.md': squareFile('a'),
+    'squares/changes/c.change.md': change('square://a#commitment/base')
+  });
+  assert.equal(messagesOf(onCommitment, 'error').length, 0);
+
+  // A non-commitment claim URI is schema-valid and caught by validate.ts.
+  const onDecision = diagnose({
+    'squares/a.square.md': squareFile('a', 'decisions:\n  - id: d\n    date: 2026-01-01\n    choice: c\n'),
+    'squares/changes/c.change.md': change('square://a#decision/d')
+  });
+  assertHas(onDecision, 'error', /suspension square:\/\/a#decision\/d: only commitments can be suspended/);
+});
+
+test('concept references resolve like any other reference (§11 error 3)', () => {
+  const withBody = (body: string) =>
+    squareFile(
+      'a',
+      'owns:\n  concepts:\n    - id: real\n      statement: s\ndecisions:\n  - id: d\n    date: 2026-01-01\n    choice: c\n    concepts: [real]\n'
+    ) + body;
+
+  assert.equal(
+    messagesOf(diagnose({ 'squares/a.square.md': withBody('Owns square://a#concept/real.\n') }), 'error').length,
+    0
+  );
+  assertHas(
+    diagnose({ 'squares/a.square.md': withBody('Owns square://a#concept/ghost.\n') }),
+    'error',
+    /square:\/\/a#concept\/ghost: no concept "ghost" in square:\/\/a \(SPEC §11 error 3\)/
+  );
+
+  // Same rule through a Change's blocked.affects, which is free-form text
+  // checked whenever it looks like a square:// URI.
+  const changeAffecting = (uri: string) => `---
+apiVersion: squaring/v0
+kind: Change
+id: c
+name: C
+type: repair
+intent: i
+targets:
+  - square://a
+semanticDiff: []
+phase: blocked
+status:
+  blocked:
+    - reason: r
+      affects:
+        - ${uri}
+---
+`;
+  assertHas(
+    diagnose({
+      'squares/a.square.md': withBody(''),
+      'squares/changes/c.change.md': changeAffecting('square://a#concept/ghost')
+    }),
+    'error',
+    /blocked\.affects square:\/\/a#concept\/ghost: no concept "ghost" in square:\/\/a/
+  );
+  assert.equal(
+    messagesOf(
+      diagnose({
+        'squares/a.square.md': withBody(''),
+        'squares/changes/c.change.md': changeAffecting('square://a#concept/real')
+      }),
+      'error'
+    ).length,
+    0
+  );
 });
 
 test('a hostile squares dir name never reaches a shell (command-injection regression)', () => {

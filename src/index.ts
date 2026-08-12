@@ -1,4 +1,5 @@
 // Public library surface of the `squaring` npm package.
+// @sq squaring -- everything the published package promises to export
 
 export {
   ID_RE,
@@ -8,6 +9,7 @@ export {
   squareUri,
   changeUri,
   claimUri,
+  conceptUri,
   parseSquareUri,
   parseChangeUri,
   parseExternalUri,
@@ -26,26 +28,71 @@ export {
   ChangeSchema,
   type Square,
   type Commitment,
+  type Concept,
+  type Selector,
   type Change
 } from './schema.ts';
 
 export {
   loadGraph,
   resolveSquaresDir,
+  readConfig,
   findRepoRoot,
-  isConfinedBindingGlob,
-  bindingMatches,
   activeChanges,
   changesTargeting,
   type Diagnostic,
+  type SquaringConfig,
   type SquareDoc,
   type ChangeDoc,
   type Graph
 } from './load.ts';
 
+export {
+  scan,
+  scanUniverse,
+  parseAnchorLine,
+  parseAnchorTarget,
+  isConfinedGlob,
+  matchesGlob,
+  globMatches,
+  type Anchor,
+  type AnchorTarget,
+  type ScanResult,
+  type ScanUniverseOptions
+} from './scan.ts';
+
+export {
+  buildSourceMap,
+  listClaims,
+  listConcepts,
+  conceptDisplayName,
+  entriesForTarget,
+  entriesForFile,
+  filesForTarget,
+  type ClaimRecord,
+  type IndexEntry,
+  type ResolvedAnchor,
+  type ResolvedTarget,
+  type SelectorMatch,
+  type SelectorScope,
+  type SourceMap
+} from './sources.ts';
+
+export {
+  resolveIndexTarget,
+  resolveIndexFile,
+  entriesForScope,
+  formatForwardIndex,
+  formatReverseIndex,
+  indexJson,
+  indexText,
+  type IndexQuery,
+  type IndexTarget
+} from './indexing.ts';
+
 export { validateGraph, hasErrors, formatDiagnostics } from './validate.ts';
 
-export { compileSquarePack, compileChangePack, compileContext } from './context.ts';
+export { compileSquarePack, compileChangePack, compileContext, type PackOptions } from './context.ts';
 
 export { squareTemplate, changeTemplate, scaffoldSquare, scaffoldChange, type ScaffoldResult } from './scaffold.ts';
 

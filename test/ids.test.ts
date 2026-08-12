@@ -2,9 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ID_RE,
+  CLAIM_FACETS,
   squareUri,
   changeUri,
   claimUri,
+  conceptUri,
   parseSquareUri,
   parseChangeUri,
   parseExternalUri,
@@ -33,6 +35,42 @@ test('URI builders and parsers round-trip', () => {
   });
   assert.equal(parseChangeUri('change://add-refunds'), 'add-refunds');
   assert.equal(parseExternalUri('external://stripe'), 'stripe');
+});
+
+test('concept URIs build and parse, and never look like claims', () => {
+  assert.equal(conceptUri('orders', 'line-item'), 'square://orders#concept/line-item');
+  assert.deepEqual(parseSquareUri('square://orders#concept/line-item'), {
+    squareId: 'orders',
+    conceptId: 'line-item'
+  });
+
+  // A concept URI carries conceptId and never facet/claimId — the two shapes
+  // are disjoint, which is what keeps suspensions (commitments only, §9) from
+  // ever reaching a concept.
+  const concept = parseSquareUri('square://orders#concept/order');
+  assert.equal(concept?.facet, undefined);
+  assert.equal(concept?.claimId, undefined);
+  assert.ok(!CLAIM_FACETS.includes('concept' as never), 'concept must not be a claim facet');
+
+  // Every claim facet still parses into facet/claimId, not conceptId.
+  for (const facet of CLAIM_FACETS) {
+    const ref = parseSquareUri(`square://orders#${facet}/x`);
+    assert.deepEqual(ref, { squareId: 'orders', facet, claimId: 'x' });
+  }
+});
+
+test('malformed concept URIs are rejected', () => {
+  assert.equal(parseSquareUri('square://orders#concept/'), null);
+  assert.equal(parseSquareUri('square://orders#concept/Order'), null);
+  assert.equal(parseSquareUri('square://orders#concepts/order'), null);
+  assert.equal(parseSquareUri('square://orders#concept/-order'), null);
+});
+
+test('a concept URI written in prose is extracted like any other reference', () => {
+  const body = 'The [[orders]] square owns square://orders#concept/line-item, unlike square://orders#concept/ghost.';
+  const refs = extractBodyRefs(body);
+  assert.deepEqual(refs.wiki, ['orders']);
+  assert.deepEqual(refs.uris, ['square://orders#concept/line-item', 'square://orders#concept/ghost']);
 });
 
 test('parsers reject malformed URIs', () => {

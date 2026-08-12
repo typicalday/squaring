@@ -2,6 +2,7 @@
 // *.change.md, parses frontmatter, validates each document against the
 // schema, and returns a Graph plus load-time diagnostics. Loading never
 // writes to the filesystem.
+// @sq graph-loader -- reads the graph files; the scan and the resolution live next door in scan.ts and sources.ts
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -22,6 +23,13 @@ export interface SquareDoc {
   body: string;
   /** path relative to the repo root */
   file: string;
+  /**
+   * Globs found under a leftover `bindings` key, removed before schema
+   * validation so the rest of the document still loads. Present only on a
+   * document that has not been migrated to `sources` — §11 error 12 reports it
+   * with the §15.7 rewrite.
+   */
+  legacyBindings?: string[];
 }
 
 export interface ChangeDoc {
@@ -35,6 +43,8 @@ export interface Graph {
   rootDir: string;
   /** squares directory, relative to rootDir (default "squares") */
   squaresDir: string;
+  /** `.squaring.json` scanIgnore globs (§4), applied to the scan universe (§15.4) */
+  scanIgnore: string[];
   squares: Map<string, SquareDoc>;
   changes: Map<string, ChangeDoc>;
   /** load-time (schema/parse) diagnostics; integrity checks live in validate.ts */
@@ -56,6 +66,37 @@ function lstatExists(p: string): boolean {
   }
 }
 
+/** The whole of `.squaring.json` (SPEC §4) — no other configuration exists. */
+export interface SquaringConfig {
+  /** squares directory, relative to the repo root; default "squares" */
+  dir?: string;
+  /** repo-relative globs removed from the scan universe (§15.4 step 3) */
+  scanIgnore?: string[];
+}
+
+/**
+ * Read `.squaring.json` if present. Throws on invalid JSON — a config the user
+ * wrote but the tool cannot read must never be silently treated as absent.
+ * Fields of the wrong type are ignored rather than fatal, matching the
+ * long-standing treatment of `dir`.
+ */
+export function readConfig(rootDir: string): SquaringConfig {
+  const configPath = path.join(rootDir, '.squaring.json');
+  if (!fs.existsSync(configPath)) return {};
+  let raw: { dir?: unknown; scanIgnore?: unknown };
+  try {
+    raw = JSON.parse(fs.readFileSync(configPath, 'utf8')) as { dir?: unknown; scanIgnore?: unknown };
+  } catch (err) {
+    throw new Error(`.squaring.json: invalid JSON (${err instanceof Error ? err.message : String(err)})`);
+  }
+  const config: SquaringConfig = {};
+  if (typeof raw.dir === 'string' && raw.dir.length > 0) config.dir = raw.dir;
+  if (Array.isArray(raw.scanIgnore)) {
+    config.scanIgnore = raw.scanIgnore.filter((g): g is string => typeof g === 'string' && g.length > 0);
+  }
+  return config;
+}
+
 /**
  * Resolve the squares directory (SPEC §4): .squaring.json {"dir"} or "squares".
  *
@@ -68,17 +109,7 @@ function lstatExists(p: string): boolean {
  * (reads), scaffoldSquare/scaffoldChange and initRepo (writes).
  */
 export function resolveSquaresDir(rootDir: string): string {
-  let dir = 'squares';
-  const configPath = path.join(rootDir, '.squaring.json');
-  if (fs.existsSync(configPath)) {
-    let raw: { dir?: unknown };
-    try {
-      raw = JSON.parse(fs.readFileSync(configPath, 'utf8')) as { dir?: unknown };
-    } catch (err) {
-      throw new Error(`.squaring.json: invalid JSON (${err instanceof Error ? err.message : String(err)})`);
-    }
-    if (typeof raw.dir === 'string' && raw.dir.length > 0) dir = raw.dir;
-  }
+  const dir = readConfig(rootDir).dir ?? 'squares';
 
   const root = path.resolve(rootDir);
   const resolved = path.resolve(rootDir, dir);
@@ -113,7 +144,19 @@ export function resolveSquaresDir(rootDir: string): string {
   if (probeReal !== rootReal && !probeReal.startsWith(rootReal + path.sep)) {
     throw new Error(`squares dir resolves outside the repository via a symlink (got ${JSON.stringify(dir)})`);
   }
-  return dir;
+  // Return the canonical repo-relative POSIX form, never the raw config string.
+  // §15.4 step 2 removes the squares directory from the scan universe with a
+  // path-prefix test; a non-canonical spelling (`./squares`, `squares/.`) would
+  // match nothing there and let every `.square.md` back into the universe as
+  // its own realization. Normalizing once, here, is what makes every caller —
+  // loader, scanner, scaffolder — agree on one spelling.
+  const relative = path.relative(root, resolved);
+  return relative === '' ? '.' : toPosixPath(relative);
+}
+
+/** Repo-relative paths are POSIX everywhere in the graph, including on Windows. */
+function toPosixPath(p: string): string {
+  return path.sep === '/' ? p : p.split(path.sep).join('/');
 }
 
 /**
@@ -168,7 +211,9 @@ function loadDoc<T>(
   absFile: string,
   relFile: string,
   schema: z.ZodType<T>,
-  diagnostics: Diagnostic[]
+  diagnostics: Diagnostic[],
+  /** runs on the raw frontmatter object, before schema validation */
+  prepare?: (raw: unknown) => void
 ): { meta: T; body: string } | null {
   // Security (SPEC §4): resolveSquaresDir validates the squares *directory* is
   // contained in the repo, but not the individual entries inside it. An entry
@@ -224,6 +269,8 @@ function loadDoc<T>(
     return null;
   }
 
+  prepare?.(fm.meta);
+
   const parsed = schema.safeParse(fm.meta);
   if (!parsed.success) {
     diagnostics.push({ severity: 'error', file: relFile, message: formatZodIssues(parsed.error) });
@@ -236,6 +283,21 @@ function stem(file: string, suffix: string): string {
   return path.basename(file).slice(0, -suffix.length);
 }
 
+/**
+ * Intercept the removed `bindings` key (§6 migration note, §15.7) before schema
+ * validation. Left in place it would trip the generic unknown-field error and
+ * abort the whole document; removed here, the Square still loads and validate.ts
+ * reports §11 error 12 with the exact rewrite. Returns the globs it removed, or
+ * undefined when the key was absent.
+ */
+function takeLegacyBindings(raw: unknown): string[] | undefined {
+  if (raw === null || typeof raw !== 'object' || !('bindings' in raw)) return undefined;
+  const record = raw as Record<string, unknown>;
+  const value = record.bindings;
+  delete record.bindings;
+  return Array.isArray(value) ? value.filter((g): g is string => typeof g === 'string') : [];
+}
+
 export function loadGraph(rootDir: string): Graph {
   const root = path.resolve(rootDir);
   const squaresDir = resolveSquaresDir(root);
@@ -245,6 +307,7 @@ export function loadGraph(rootDir: string): Graph {
   const graph: Graph = {
     rootDir: root,
     squaresDir,
+    scanIgnore: readConfig(root).scanIgnore ?? [],
     squares: new Map(),
     changes: new Map(),
     diagnostics: []
@@ -265,7 +328,10 @@ export function loadGraph(rootDir: string): Graph {
 
   for (const f of squareFiles) {
     const rel = path.join(squaresDir, f);
-    const doc = loadDoc(path.join(absSquares, f), rel, SquareSchema, graph.diagnostics);
+    let legacyBindings: string[] | undefined;
+    const doc = loadDoc(path.join(absSquares, f), rel, SquareSchema, graph.diagnostics, (raw) => {
+      legacyBindings = takeLegacyBindings(raw);
+    });
     if (!doc) continue;
 
     if (doc.meta.id !== stem(f, '.square.md')) {
@@ -284,7 +350,12 @@ export function loadGraph(rootDir: string): Graph {
       });
       continue;
     }
-    graph.squares.set(doc.meta.id, { meta: doc.meta, body: doc.body, file: rel });
+    graph.squares.set(doc.meta.id, {
+      meta: doc.meta,
+      body: doc.body,
+      file: rel,
+      ...(legacyBindings === undefined ? {} : { legacyBindings })
+    });
   }
 
   if (fs.existsSync(absChanges)) {
@@ -355,38 +426,6 @@ export function findRepoRoot(startDir: string): string | null {
     if (parent === current) return null;
     current = parent;
   }
-}
-
-/**
- * True when a bindings glob is confined to the repository by construction:
- * relative, and free of `..` (SPEC §6 — bindings are repo-relative globs).
- * An absolute or `..`-carrying glob is a validation error and is never
- * enumerated — otherwise a hostile Square could list files from outside the
- * repository into Context Packs.
- */
-export function isConfinedBindingGlob(glob: string): boolean {
-  return !path.isAbsolute(glob) && !glob.includes('..');
-}
-
-/**
- * Repo-relative files matched by a bindings glob. Returns [] for an
- * unconfined glob, and filters out any match that resolves outside rootDir.
- */
-export function bindingMatches(rootDir: string, glob: string): string[] {
-  if (!isConfinedBindingGlob(glob)) return [];
-  const root = path.resolve(rootDir);
-  let matched: string[];
-  try {
-    matched = fs.globSync(glob, { cwd: root });
-  } catch {
-    return [];
-  }
-  return matched
-    .filter((m) => {
-      const abs = path.resolve(root, m);
-      return abs === root || abs.startsWith(root + path.sep);
-    })
-    .sort();
 }
 
 /** Changes whose phase is neither done nor abandoned. */

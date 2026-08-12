@@ -3,6 +3,7 @@
 // to re-run; never overwrites an existing PROTOCOL.md silently (it rewrites
 // it only because the file is tool-owned documentation, versioned with the
 // tool).
+// @sq cli -- `squaring init`, one of the two writing commands
 
 import fs from 'node:fs';
 import path from 'node:path';

@@ -1,19 +1,14 @@
 // Referential-integrity validation — SPEC §11. Operates on a loaded Graph;
 // returns load diagnostics plus integrity errors and warnings.
+// @sq graph-loader#concept/integrity-rules -- every §11 error and warning, in one pass
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { extractBodyRefs, parseSquareUri, parseChangeUri, parseExternalUri } from './ids.ts';
-import {
-  bindingMatches,
-  changesTargeting,
-  isConfinedBindingGlob,
-  type Diagnostic,
-  type Graph,
-  type SquareDoc
-} from './load.ts';
+import { extractBodyRefs, parseSquareUri, parseChangeUri, parseExternalUri, conceptUri } from './ids.ts';
+import { changesTargeting, type Diagnostic, type Graph, type SquareDoc } from './load.ts';
 import { PROTOCOL_MD } from './protocol.ts';
+import { buildSourceMap, listClaims, listConcepts, type SourceMap } from './sources.ts';
 
 const STALE_BLOCKED_DAYS = 14;
 
@@ -40,12 +35,21 @@ function claimIds(square: SquareDoc): Map<string, Set<string>> {
   return facets;
 }
 
-/** Does `square://id` or `square://id#facet/claim` resolve in this graph? */
+/**
+ * Does `square://id`, `square://id#facet/claim` or `square://id#concept/cid`
+ * resolve in this graph? (SPEC §11 error 3 — concepts are addressable targets.)
+ */
 function resolveRef(graph: Graph, uri: string): { ok: boolean; why?: string } {
   const ref = parseSquareUri(uri);
   if (!ref) return { ok: false, why: 'not a valid square:// URI' };
   const target = graph.squares.get(ref.squareId);
   if (!target) return { ok: false, why: `Square "${ref.squareId}" does not exist` };
+  if (ref.conceptId !== undefined) {
+    const declared = listConcepts(target).some((c) => c.id === ref.conceptId);
+    if (!declared) {
+      return { ok: false, why: `no concept "${ref.conceptId}" in square://${ref.squareId}` };
+    }
+  }
   if (ref.facet && ref.claimId) {
     const ids = claimIds(target).get(ref.facet);
     if (!ids?.has(ref.claimId)) {
@@ -53,6 +57,55 @@ function resolveRef(graph: Graph, uri: string): { ok: boolean; why?: string } {
     }
   }
   return { ok: true };
+}
+
+/**
+ * Concept declarations and the tags pointing at them (SPEC §11 error 9,
+ * warning 6). Tags resolve only against the claim's own Square — cross-Square
+ * tagging does not exist (§14.3).
+ */
+function checkConcepts(square: SquareDoc, sourceMap: SourceMap, out: Diagnostic[]): void {
+  const file = square.file;
+  const declared = new Set<string>();
+  for (const concept of listConcepts(square)) {
+    if (declared.has(concept.id)) {
+      out.push(err(file, `duplicate concept id "${concept.id}" in owns.concepts (SPEC §14.2, §11 error 9)`));
+      continue;
+    }
+    declared.add(concept.id);
+  }
+
+  const tagged = new Set<string>();
+  for (const claim of listClaims(square)) {
+    for (const tag of claim.concepts) {
+      if (declared.has(tag)) {
+        tagged.add(tag);
+        continue;
+      }
+      out.push(
+        err(
+          file,
+          `${claim.facet} "${claim.id}" is tagged with concept "${tag}", which square://${square.meta.id} does not declare — ` +
+            `concept tags never resolve across Squares (SPEC §14.3, §11 error 9)`
+        )
+      );
+    }
+  }
+
+  // Warning 6: a concept nothing points at.
+  const anchoredTargets = new Set(sourceMap.resolved.map((r) => r.target.uri));
+  for (const concept of listConcepts(square)) {
+    if (tagged.has(concept.id)) continue;
+    if ((concept.sources ?? []).length > 0) continue;
+    if (anchoredTargets.has(conceptUri(square.meta.id, concept.id))) continue;
+    out.push(
+      warn(
+        file,
+        `concept "${concept.id}" is inert — no claim is tagged with it, no selector is scoped to it, ` +
+          `and no anchor targets it (SPEC §11 warning 6)`
+      )
+    );
+  }
 }
 
 function checkDuplicateClaimIds(square: SquareDoc, out: Diagnostic[]): void {
@@ -187,17 +240,15 @@ function checkSquare(graph: Graph, square: SquareDoc, out: Diagnostic[]): void {
   if ((meta.commitments ?? []).length > 0 && meta.authority === undefined) {
     out.push(warn(file, 'declares commitments but no authority block — S1 requires authority (SPEC §11 warning 2)'));
   }
-  for (const glob of meta.bindings ?? []) {
-    if (!isConfinedBindingGlob(glob)) {
-      out.push(err(file, `binding "${glob}" must be a repo-relative glob without ".." (SPEC §6, §11 error 8)`));
-      continue;
-    }
-    try {
-      const matches = bindingMatches(graph.rootDir, glob);
-      if (matches.length === 0) out.push(warn(file, `binding "${glob}" matches no files`));
-    } catch {
-      out.push(warn(file, `binding "${glob}" could not be evaluated`));
-    }
+  // Error 12: the removed `bindings` key, reported with its rewrite rather
+  // than as a generic unknown field (§6 migration note, §15.7).
+  if (square.legacyBindings !== undefined) {
+    const globs = square.legacyBindings;
+    const rewrite =
+      globs.length > 0
+        ? ` — move ${globs.map((g) => JSON.stringify(g)).join(', ')} under \`sources:\`, one \`- glob: <glob>\` entry each`
+        : ' — use `sources:` with `- glob: <glob>` entries instead';
+    out.push(err(file, `\`bindings\` is removed, replaced by \`sources\`${rewrite} (SPEC §15.7, §11 error 12)`));
   }
 }
 
@@ -310,18 +361,30 @@ function checkBodyRefs(graph: Graph, out: Diagnostic[]): void {
   }
 }
 
-/** Run all §11 checks. Returns load diagnostics + integrity diagnostics, errors first. */
-export function validateGraph(graph: Graph): Diagnostic[] {
+/**
+ * Run all §11 checks. Returns load diagnostics + integrity diagnostics, errors
+ * first.
+ *
+ * `validate` runs the anchor scan (§15) on every invocation — errors 10 and 11
+ * are not optional extras. A caller that already built the source map (the CLI
+ * builds one for `validate` + `context` in the same process) passes it in to
+ * avoid a second pass over the scan universe.
+ */
+export function validateGraph(graph: Graph, sourceMap: SourceMap = buildSourceMap(graph)): Diagnostic[] {
   const out: Diagnostic[] = [...graph.diagnostics];
 
   for (const square of graph.squares.values()) {
     checkDuplicateClaimIds(square, out);
+    checkConcepts(square, sourceMap, out);
     checkSquare(graph, square, out);
   }
   checkPartOfCycles(graph, out);
   checkChanges(graph, out);
   checkBodyRefs(graph, out);
   checkProtocolFreshness(graph, out);
+  // Errors 8, 10, 11 and warning 3 — already attributed to the realization
+  // file (anchors, coverage) or the declaring Square file (globs).
+  out.push(...sourceMap.findings);
 
   return out.sort((a, b) => {
     if (a.severity !== b.severity) return a.severity === 'error' ? -1 : 1;

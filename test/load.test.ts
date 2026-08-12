@@ -224,6 +224,248 @@ test('a squares dir that is a circular symlink is rejected, not silently accepte
   }
 });
 
+test('.squaring.json {scanIgnore} lands on the graph; a bad value is ignored, not fatal', () => {
+  const ok = makeRepo({
+    '.squaring.json': '{ "scanIgnore": ["docs/**", "vendor/**"] }\n',
+    'squares/a.square.md': squareFile('a')
+  });
+  try {
+    assert.deepEqual(loadGraph(ok).scanIgnore, ['docs/**', 'vendor/**']);
+  } finally {
+    rmRepo(ok);
+  }
+
+  const absent = makeRepo({ 'squares/a.square.md': squareFile('a') });
+  try {
+    assert.deepEqual(loadGraph(absent).scanIgnore, []);
+  } finally {
+    rmRepo(absent);
+  }
+
+  // Non-string entries are dropped and a non-array value is ignored entirely —
+  // same tolerance `dir` has had all along.
+  const mixed = makeRepo({
+    '.squaring.json': '{ "scanIgnore": ["docs/**", 7, ""] }\n',
+    'squares/a.square.md': squareFile('a')
+  });
+  try {
+    assert.deepEqual(loadGraph(mixed).scanIgnore, ['docs/**']);
+  } finally {
+    rmRepo(mixed);
+  }
+
+  const wrongType = makeRepo({
+    '.squaring.json': '{ "scanIgnore": "docs/**" }\n',
+    'squares/a.square.md': squareFile('a')
+  });
+  try {
+    assert.deepEqual(loadGraph(wrongType).scanIgnore, []);
+  } finally {
+    rmRepo(wrongType);
+  }
+});
+
+test('concepts and sources selectors round-trip through the schema', () => {
+  const root = makeRepo({
+    'squares/a.square.md': squareFile(
+      'a',
+      `owns:
+  concepts:
+    - id: named
+      name: A Named Concept
+      statement: what it means
+      sources:
+        - glob: src/named.ts
+          expect: annotated
+          note: the whole of it
+    - id: unnamed
+      statement: no display name
+sources:
+  - glob: src/**
+`
+    )
+  });
+  try {
+    const graph = loadGraph(root);
+    assert.deepEqual(graph.diagnostics, []);
+    const meta = graph.squares.get('a')!.meta;
+    assert.deepEqual(meta.owns?.concepts, [
+      {
+        id: 'named',
+        name: 'A Named Concept',
+        statement: 'what it means',
+        sources: [{ glob: 'src/named.ts', expect: 'annotated', note: 'the whole of it' }]
+      },
+      { id: 'unnamed', statement: 'no display name' }
+    ]);
+    assert.deepEqual(meta.sources, [{ glob: 'src/**' }]);
+  } finally {
+    rmRepo(root);
+  }
+});
+
+test('`expect` accepts only the literal "annotated"', () => {
+  const root = makeRepo({
+    'squares/a.square.md': squareFile('a', 'sources:\n  - glob: src/**\n    expect: tested\n')
+  });
+  try {
+    const graph = loadGraph(root);
+    assert.equal(graph.squares.size, 0);
+    assert.match(graph.diagnostics[0]!.message, /sources\.0\.expect/);
+  } finally {
+    rmRepo(root);
+  }
+});
+
+test('a selector needs a non-empty glob and rejects unknown keys', () => {
+  const noGlob = makeRepo({ 'squares/a.square.md': squareFile('a', 'sources:\n  - note: nothing to match\n') });
+  try {
+    assert.match(loadGraph(noGlob).diagnostics[0]!.message, /sources\.0\.glob/);
+  } finally {
+    rmRepo(noGlob);
+  }
+
+  const emptyGlob = makeRepo({ 'squares/a.square.md': squareFile('a', 'sources:\n  - glob: ""\n') });
+  try {
+    assert.match(loadGraph(emptyGlob).diagnostics[0]!.message, /sources\.0\.glob/);
+  } finally {
+    rmRepo(emptyGlob);
+  }
+
+  const unknownKey = makeRepo({
+    'squares/a.square.md': squareFile('a', 'sources:\n  - glob: src/**\n    lines: [1, 2]\n')
+  });
+  try {
+    assert.match(loadGraph(unknownKey).diagnostics[0]!.message, /lines/);
+  } finally {
+    rmRepo(unknownKey);
+  }
+});
+
+test('a concept needs a statement and rejects claim-only fields', () => {
+  const noStatement = makeRepo({
+    'squares/a.square.md': squareFile('a', 'owns:\n  concepts:\n    - id: c\n      name: C\n')
+  });
+  try {
+    assert.match(loadGraph(noStatement).diagnostics[0]!.message, /owns\.concepts\.0\.statement/);
+  } finally {
+    rmRepo(noStatement);
+  }
+
+  // A concept is not a claim: strength and evidenceClass have no place on it.
+  const claimFields = makeRepo({
+    'squares/a.square.md': squareFile(
+      'a',
+      'owns:\n  concepts:\n    - id: c\n      statement: s\n      strength: must\n      evidenceClass: test\n'
+    )
+  });
+  try {
+    const message = loadGraph(claimFields).diagnostics[0]!.message;
+    assert.match(message, /strength/);
+    assert.match(message, /evidenceClass/);
+  } finally {
+    rmRepo(claimFields);
+  }
+});
+
+test('a leftover `bindings` key still loads the rest of the document', () => {
+  const root = makeRepo({ 'squares/a.square.md': squareFile('a', 'bindings:\n  - src/**\n  - lib/*.ts\n') });
+  try {
+    const graph = loadGraph(root);
+    // The key is removed before schema validation, so the Square loads and the
+    // migration error (§11 error 12) can be reported from validate.ts.
+    assert.deepEqual(graph.diagnostics, []);
+    const doc = graph.squares.get('a')!;
+    assert.deepEqual(doc.legacyBindings, ['src/**', 'lib/*.ts']);
+    assert.equal(doc.meta.sources, undefined);
+  } finally {
+    rmRepo(root);
+  }
+
+  const emptyList = makeRepo({ 'squares/a.square.md': squareFile('a', 'bindings: []\n') });
+  try {
+    assert.deepEqual(loadGraph(emptyList).squares.get('a')!.legacyBindings, []);
+  } finally {
+    rmRepo(emptyList);
+  }
+
+  const migrated = makeRepo({ 'squares/a.square.md': squareFile('a', 'sources:\n  - glob: src/**\n') });
+  try {
+    assert.equal(loadGraph(migrated).squares.get('a')!.legacyBindings, undefined);
+  } finally {
+    rmRepo(migrated);
+  }
+});
+
+test('claim concept tags round-trip on every claim kind and on proposedDecisions', () => {
+  const root = makeRepo({
+    'squares/a.square.md': squareFile(
+      'a',
+      `owns:
+  concepts:
+    - id: c
+      statement: s
+contracts:
+  provides:
+    - id: p
+      statement: s
+      concepts: [c]
+  consumes:
+    - id: q
+      from: square://a
+      statement: s
+      concepts: [c]
+decisions:
+  - id: d
+    choice: c
+    concepts: [c]
+scenarios:
+  - id: s
+    given: g
+    when: w
+    then: [t]
+    concepts: [c]
+unresolved:
+  - id: u
+    question: q
+    concepts: [c]
+`
+    ),
+    'squares/changes/ch.change.md': `---
+apiVersion: squaring/v0
+kind: Change
+id: ch
+name: Ch
+type: repair
+intent: i
+targets:
+  - square://a
+proposedDecisions:
+  - id: pd
+    choice: c
+    concepts: [anything-goes-until-promoted]
+semanticDiff: []
+phase: active
+---
+`
+  });
+  try {
+    const graph = loadGraph(root);
+    assert.deepEqual(graph.diagnostics, []);
+    const meta = graph.squares.get('a')!.meta;
+    assert.deepEqual(meta.contracts?.provides?.[0]?.concepts, ['c']);
+    assert.deepEqual(meta.contracts?.consumes?.[0]?.concepts, ['c']);
+    assert.deepEqual(meta.decisions?.[0]?.concepts, ['c']);
+    assert.deepEqual(meta.scenarios?.[0]?.concepts, ['c']);
+    assert.deepEqual(meta.unresolved?.[0]?.concepts, ['c']);
+    assert.deepEqual(graph.changes.get('ch')!.meta.proposedDecisions?.[0]?.concepts, [
+      'anything-goes-until-promoted'
+    ]);
+  } finally {
+    rmRepo(root);
+  }
+});
+
 test('a UTF-8 BOM before the frontmatter is tolerated', () => {
   const root = makeRepo({ 'squares/a.square.md': '\uFEFF' + squareFile('a') });
   try {
