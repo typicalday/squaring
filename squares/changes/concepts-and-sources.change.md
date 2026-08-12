@@ -39,7 +39,8 @@ status:
     - Implement the schema promotion and new validation rules (square://resource-model, square://graph-loader).
     - Implement the anchor scanner, resolution, and squaring index CLI/MCP surface (square://cli, square://mcp-server).
     - Extend the Context Pack compiler per amended §12 (square://context-compiler).
-    - Migrate this repository's own Squares from bindings to sources, declare concepts, anchor src/, and add scanIgnore for docs/ (SPEC.md now contains literal @sq examples).
+    - Migrate this repository's own Squares from bindings to sources, declare concepts, anchor src/, and add scanIgnore for docs/ (SPEC.md now contains literal @sq examples). Must follow the schema implementation — the shipped schema rejects sources as an unknown field.
+    - Update README.md in the same commits that ship the features (CLI/MCP lists gain index; the walkthrough gains the concept and anchor story — the README describes the published tool, so it must not lead the implementation), and create CHANGELOG.md recording the breaking bindings-to-sources schema change (SPEC §16 requires the record; no CHANGELOG exists yet).
 proposedDecisions:
   - id: concepts-not-aspects
     choice: >
