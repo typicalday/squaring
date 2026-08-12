@@ -4,6 +4,49 @@ All notable changes to `squaring` are recorded here. `apiVersion: squaring/v0`
 is pre-1.0: breaking schema changes bump no apiVersion, so this file is the
 record (SPEC §16).
 
+## 0.4.0 — scan diagnostics
+
+Implements `change://scan-diagnostics` — two additions to the SPEC §11 finding
+list, closing the two silent-failure gaps the 0.3.0 realization audit recorded
+under rule A7 but could not fix without amending the spec.
+
+### Added
+
+- **§11 warning 7 — the scan universe is empty.** `validate` now says so when
+  §15.4 leaves no file for a selector to match or the scanner to read an anchor
+  from. Previously this reported `OK` while the whole sources feature was off.
+  The warning fires on the empty result, never on a named cause, so a `dir`
+  covering the repository root, a `scanIgnore` that removes every file, and a
+  repository with nothing staged in git all reach it alike. The message names
+  the squares directory and the `scanIgnore` patterns in force, and is
+  attributed to `.squaring.json` when the configuration could have caused it.
+
+  A `scanIgnore` that empties the universe only *partly* is deliberately not
+  this warning — that surfaces as the existing warning 3 on each selector left
+  matching nothing.
+
+- **§11 warning 8 — a scan-universe file could not be read.** A permission
+  error, or a file removed between the universe computation and the read, means
+  the file's anchors are unknown and therefore missing from the index and from
+  Context Pack section 11. Reported once per file, and independently of error
+  11: a file covered by an `expect: annotated` selector produces both, and the
+  two say different things — the error says a coverage expectation is unmet,
+  the warning says the bytes were never examined.
+
+### Changed (specification wording, no behavior change)
+
+- §15.4 step 4 now names **unreadable** as a third file class beside text and
+  binary, with anchors *unknown* rather than *absent*. §15.3's `expect` row
+  states outright that an unreadable file is not exempt — the binary exemption
+  is not extended to it. Both sentences describe what 0.3.0 already did; they
+  were missing from the spec, which is why warning 8 had no defined subject.
+
+### Upgrading
+
+No action required. Both additions are warnings: `validate` exit codes are
+unchanged, and a repository that was clean on 0.3.0 stays clean on 0.4.0 unless
+its scan universe is genuinely empty or a file genuinely cannot be read.
+
 ## 0.3.0 — concepts and source anchors
 
 Implements `change://concepts-and-sources` — SPEC §14 (Concepts) and §15

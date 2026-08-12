@@ -3,7 +3,7 @@
 // scan.ts produces raw anchors and the file set; this module resolves anchor
 // targets against declared Squares, concepts and claims, applies the union
 // rules of §15.5, and emits both the index entries (§15.6) and the findings
-// that validate.ts turns into §11 errors 8, 10, 11 and warning 3.
+// that validate.ts turns into §11 errors 8, 10, 11 and warnings 3, 7 and 8.
 // @sq graph-loader#concept/source-resolution -- the §15.5 union and its transpose
 
 import { CLAIM_FACETS, claimUri, conceptUri, squareUri, type ClaimFacet } from './ids.ts';
@@ -76,7 +76,7 @@ export interface SourceMap {
   universe: string[];
   /** universe files sniffed binary: selectable, never anchor-read, exempt from `expect` */
   binary: Set<string>;
-  /** universe files whose bytes could not be read: selectable, never exempt from `expect` */
+  /** universe files whose bytes could not be read: selectable, never exempt from `expect`, each §11 warning 8 */
   unreadable: Set<string>;
   /** every anchor found, including the ones that failed to resolve */
   anchors: Anchor[];
@@ -86,7 +86,7 @@ export interface SourceMap {
   selectors: SelectorMatch[];
   /** every resolved pairing, deduped and in the §15.6 order */
   entries: IndexEntry[];
-  /** §11 errors 8, 10, 11 and warning 3, already attributed */
+  /** §11 errors 8, 10, 11 and warnings 3, 7, 8 — already attributed */
   findings: Diagnostic[];
 }
 
@@ -223,6 +223,47 @@ export function buildSourceMap(graph: Graph): SourceMap {
   };
 
   const findings: Diagnostic[] = [];
+
+  // ---- universe-level findings (§11 warnings 7 and 8) ----------------------
+  // Both describe the scan universe itself rather than any declaration in the
+  // graph, so they are emitted before a single Square is looked at.
+
+  // Warning 7 fires on the empty result, never on a named cause: a `dir`
+  // covering the repository root, a `scanIgnore` broad enough to remove
+  // everything, and a repository with nothing staged all produce the identical
+  // silent failure — source mapping off while every other check passes. The
+  // message names the two configurable inputs of §15.4 so the reader can see
+  // which one it was (decision `empty-universe-warns` on square://graph-loader).
+  if (universe.length === 0) {
+    const ignore = graph.scanIgnore;
+    const inForce =
+      `squares dir ${JSON.stringify(graph.squaresDir)}; ` +
+      (ignore.length === 0 ? 'no scanIgnore' : `scanIgnore ${ignore.map((g) => JSON.stringify(g)).join(', ')}`);
+    findings.push(
+      warn(
+        // Only blame the config file when the config is capable of being the
+        // cause; an empty universe under stock settings is the repository's
+        // state, not a line someone wrote.
+        graph.squaresDir === 'squares' && ignore.length === 0 ? undefined : '.squaring.json',
+        `the scan universe is empty — no file is visible to the anchor scanner or to any \`sources\` glob, ` +
+          `so every selector matches zero files and no anchor can be found (${inForce}) (SPEC §15.4, §11 warning 7)`
+      )
+    );
+  }
+
+  // Warning 8 is per file and independent of error 11: the error says a
+  // declaring Square's coverage expectation is unmet, this says the bytes were
+  // never examined. A file can raise both, and suppressing one would make it
+  // conditional on an unrelated declaration.
+  for (const file of [...unreadable].sort()) {
+    findings.push(
+      warn(
+        file,
+        'could not be read, so its anchors are unknown and missing from the index and from Context Packs ' +
+          '(SPEC §15.4 step 4, §11 warning 8)'
+      )
+    );
+  }
 
   // ---- anchors -------------------------------------------------------------
   const resolved: ResolvedAnchor[] = [];

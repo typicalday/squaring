@@ -446,12 +446,15 @@ test('a concept nothing points at is inert (§11 warning 6)', () => {
     /concept "lonely" is inert — no claim is tagged with it, no selector is scoped to it, and no anchor targets it/
   );
 
-  // Any one of the three pointers clears it. A tagged claim:
+  // Any one of the three pointers clears it. A tagged claim (with a realization
+  // file, like the two fixtures below, so the universe is not empty — a
+  // squares-only repository is §11 warning 7 and would mask what is under test):
   const tagged = diagnose({
     'squares/a.square.md': squareFile(
       'a',
       'owns:\n  concepts:\n    - id: used\n      statement: s\ncommitments:\n  - id: c2\n    kind: invariant\n    strength: must\n    statement: s\n    concepts: [used]\n'
-    )
+    ),
+    'src/thing.ts': 'export const x = 1;\n'
   });
   assert.equal(messagesOf(tagged, 'warning').length, 0);
 
@@ -561,6 +564,16 @@ test('validate runs the anchor scan on every invocation', () => {
   });
   assertHas(diagnostics, 'error', /dangling anchor "square:\/\/ghost": Square "ghost" does not exist/);
   assert.equal(diagnostics.some((d) => d.file === 'src/thing.ts' && d.line === 1), true);
+});
+
+test('an empty scan universe reaches validate output, not just the source map (§11 warning 7)', () => {
+  // A repository with Squares and nothing else: every selector would match
+  // zero files and no anchor could exist. Before this warning, `validate`
+  // reported OK and the sources feature was simply off.
+  const diagnostics = diagnose({ 'squares/a.square.md': squareFile('a') });
+  assertHas(diagnostics, 'warning', /the scan universe is empty/);
+  // A warning, not an error: an empty universe is legal (SPEC §15.4).
+  assert.equal(hasErrors(diagnostics), false);
 });
 
 test('suspensions still accept claim URIs only — a concept is not suspendable', () => {
