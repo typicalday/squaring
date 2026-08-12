@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { loadGraph, type Graph } from '../src/load.ts';
+import { loadGraph, type Diagnostic, type Graph } from '../src/load.ts';
 import { buildSourceMap, filesForTarget, entriesForFile, type SourceMap } from '../src/sources.ts';
 import { formatForwardIndex, formatReverseIndex, indexJson, indexText, resolveIndexTarget } from '../src/indexing.ts';
 import { makeRepo, rmRepo, squareFile } from './helpers.ts';
@@ -31,6 +31,10 @@ function resolve(files: Record<string, string>): { graph: Graph; map: SourceMap;
 
 function errorsOf(map: SourceMap): string[] {
   return map.findings.filter((d) => d.severity === 'error').map((d) => d.message);
+}
+
+function warningsOf(map: SourceMap): Diagnostic[] {
+  return map.findings.filter((d) => d.severity === 'warning');
 }
 
 // A Square with one concept per claim tag, used across the union tests.
@@ -577,6 +581,14 @@ test('a file whose bytes cannot be read never satisfies `expect: annotated`', (t
     assert.equal(messages.length, 1);
     assert.match(messages[0]!, /could not be read, so its anchors are unknown/);
     assert.match(messages[0]!, /SPEC §15\.3, §11 error 11/);
+
+    // Warning 8 fires alongside error 11, never instead of it. The two say
+    // different things: the error says the declaring Square's coverage
+    // expectation is unmet, the warning says the bytes were never examined.
+    const warnings = warningsOf(map);
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0]!.file, 'src/locked.ts');
+    assert.match(warnings[0]!.message, /SPEC §15\.4 step 4, §11 warning 8/);
   } finally {
     try {
       fs.chmodSync(path.join(root, 'src/locked.ts'), 0o644);
@@ -609,5 +621,104 @@ test('a duplicate concept id does not make a bare anchor ambiguous with itself',
     assert.deepEqual(filesForTarget(map, 'square://a#concept/dup'), ['src/x.ts']);
   } finally {
     rmRepo(root);
+  }
+});
+
+// ---- universe-level findings (§11 warnings 7 and 8) ------------------------
+
+test('an unreadable file is reported even when no selector expects it (§11 warning 8)', (t) => {
+  const root = makeGitRepo({
+    // Deliberately no `sources` at all: without warning 8, nothing at all would
+    // be said, and the file's anchors would silently vanish from the index.
+    'squares/a.square.md': squareFile('a'),
+    'src/locked.ts': 'export const a = 1;\n'
+  });
+  const secret = path.join(root, 'src/locked.ts');
+  try {
+    fs.chmodSync(secret, 0o000);
+    let readable = true;
+    try {
+      fs.closeSync(fs.openSync(secret, 'r'));
+    } catch {
+      readable = false;
+    }
+    if (readable) {
+      t.skip('cannot exercise an unreadable file as root');
+      return;
+    }
+
+    const map = buildSourceMap(loadGraph(root));
+    assert.ok(map.unreadable.has('src/locked.ts'));
+    assert.deepEqual(errorsOf(map), [], 'no expecting selector covers it, so error 11 cannot fire');
+    const warnings = warningsOf(map);
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0]!.file, 'src/locked.ts');
+    assert.match(warnings[0]!.message, /could not be read, so its anchors are unknown/);
+    assert.match(warnings[0]!.message, /SPEC §15\.4 step 4, §11 warning 8/);
+  } finally {
+    try {
+      fs.chmodSync(secret, 0o644);
+    } catch {
+      // already gone or never created
+    }
+    rmRepo(root);
+  }
+});
+
+test('an empty scan universe is reported however it got empty (§11 warning 7)', () => {
+  const emptyWarning = (map: SourceMap): Diagnostic | undefined =>
+    map.findings.find((d) => d.message.includes('the scan universe is empty'));
+
+  // Cause 1: `dir` covers the repository root, so §15.4 step 2 — which removes
+  // the squares directory by path prefix — removes every file in the repo.
+  const viaDir = resolve({
+    '.squaring.json': `${JSON.stringify({ dir: '.' })}\n`,
+    'a.square.md': squareFile('a'),
+    'src/a.ts': 'export const a = 1;\n'
+  });
+  try {
+    assert.deepEqual(viaDir.map.universe, []);
+    const found = emptyWarning(viaDir.map);
+    assert.ok(found, 'dir: "." must not empty the universe silently');
+    assert.equal(found.severity, 'warning');
+    // Blamed on the config file, because the config is what could have caused it.
+    assert.equal(found.file, '.squaring.json');
+    assert.match(found.message, /squares dir "\."/);
+    assert.match(found.message, /no scanIgnore/);
+    assert.match(found.message, /SPEC §15\.4, §11 warning 7/);
+  } finally {
+    rmRepo(viaDir.root);
+  }
+
+  // Cause 2: a scanIgnore that removes everything step 2 left behind. Note what
+  // it takes — `**` does not match a leading-dot name, so `.squaring.json` has
+  // to be named explicitly. A scanIgnore that empties the universe only partly
+  // is warning 3 on each selector, not this warning.
+  const viaIgnore = resolve({
+    '.squaring.json': `${JSON.stringify({ scanIgnore: ['src/**', '.squaring.json'] })}\n`,
+    'squares/a.square.md': squareFile('a'),
+    'src/a.ts': 'export const a = 1;\n'
+  });
+  try {
+    assert.deepEqual(viaIgnore.map.universe, []);
+    const found = emptyWarning(viaIgnore.map);
+    assert.ok(found, 'an over-broad scanIgnore is the same silent failure as dir: "."');
+    assert.equal(found.file, '.squaring.json');
+    assert.match(found.message, /squares dir "squares"/);
+    assert.match(found.message, /scanIgnore "src\/\*\*", "\.squaring\.json"/);
+  } finally {
+    rmRepo(viaIgnore.root);
+  }
+
+  // A repository whose universe is not empty says nothing.
+  const healthy = resolve({
+    'squares/a.square.md': squareFile('a'),
+    'src/a.ts': 'export const a = 1;\n'
+  });
+  try {
+    assert.deepEqual(healthy.map.universe, ['src/a.ts']);
+    assert.equal(emptyWarning(healthy.map), undefined);
+  } finally {
+    rmRepo(healthy.root);
   }
 });

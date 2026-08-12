@@ -87,6 +87,19 @@ decisions:
       need appears.
     from: change://concepts-and-sources
     concepts: [source-resolution]
+  - id: empty-universe-warns
+    date: 2026-08-12
+    choice: >
+      An empty scan universe is SPEC §11 warning 7, not a configuration error,
+      and `dir: "."` is not rejected as a special case.
+    rationale: >
+      The observable failure is "source mapping is silently off", and several
+      distinct configurations produce it — a `dir` covering the repository
+      root, a `scanIgnore` broad enough to remove everything, an unstaged
+      repository. Rejecting one named cause leaves the others silent; warning
+      on the shared symptom catches all of them with one rule.
+    from: change://scan-diagnostics
+    concepts: [scan-universe, integrity-rules]
 relationships:
   - type: dependsOn
     target: square://resource-model

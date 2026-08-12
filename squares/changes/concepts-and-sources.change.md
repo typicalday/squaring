@@ -88,6 +88,9 @@ the index with no finding at all, because §11 enumerates twelve errors and six
 warnings and none of them fits. Reporting it needs a new §11 warning, which is
 a spec amendment.
 
+> **Closed by `change://scan-diagnostics`** (2026-08-12): §11 warning 8 now
+> reports every unreadable scan-universe file, independently of error 11.
+
 **2. `dir: "."` empties the scan universe with no diagnostic.** §4 permits
 `.squaring.json` to move the squares directory and shows it as a subdirectory
 of the repository root; it does not say whether the root itself is a legal
@@ -97,6 +100,12 @@ anchor is visible, and `validate` reports nothing because there is nothing left
 to find. This is the literal reading of §15.4 step 2 and is what the
 implementation does. Rejecting `dir: "."` as a configuration error, or warning
 when the universe is empty, would add a rule §4 and §11 do not contain.
+
+> **Closed by `change://scan-diagnostics`** (2026-08-12): §11 warning 7 now
+> reports an empty scan universe. The repository owner chose the second of the
+> two options named above — warn on the empty result, do not special-case
+> `dir: "."` — because the warning then also catches a `scanIgnore` that
+> removes every file. `dir: "."` remains a legal configuration.
 
 **3. §15.3 has no repository-level "every file is claimed" check, and
 `expect: annotated` cannot express one for a parent Square.** §15.3 requires an
@@ -110,3 +119,9 @@ every file. The honest shape is therefore the per-file enumerations this
 repository declares. The residual gap is real: a newly added `src/foo.ts` that
 no selector matches produces no finding. Closing it needs either a per-Square
 directory layout or a new repo-level coverage feature in §15.
+
+> **Left open deliberately** (2026-08-12): when items 1 and 2 were closed by
+> `change://scan-diagnostics`, the repository owner ruled this one out of
+> scope — the per-file enumerations are the honest shape today, and adding a
+> transitive or repo-level coverage feature before a real need appears would
+> contradict the `union-resolution-only` decision on `square://graph-loader`.

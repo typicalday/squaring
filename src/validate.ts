@@ -366,9 +366,9 @@ function checkBodyRefs(graph: Graph, out: Diagnostic[]): void {
  * first.
  *
  * `validate` runs the anchor scan (§15) on every invocation — errors 10 and 11
- * are not optional extras. A caller that already built the source map (the CLI
- * builds one for `validate` + `context` in the same process) passes it in to
- * avoid a second pass over the scan universe.
+ * and warnings 7 and 8 are not optional extras. A caller that already built the
+ * source map (the CLI builds one for `validate` + `context` in the same
+ * process) passes it in to avoid a second pass over the scan universe.
  */
 export function validateGraph(graph: Graph, sourceMap: SourceMap = buildSourceMap(graph)): Diagnostic[] {
   const out: Diagnostic[] = [...graph.diagnostics];
@@ -382,8 +382,9 @@ export function validateGraph(graph: Graph, sourceMap: SourceMap = buildSourceMa
   checkChanges(graph, out);
   checkBodyRefs(graph, out);
   checkProtocolFreshness(graph, out);
-  // Errors 8, 10, 11 and warning 3 — already attributed to the realization
-  // file (anchors, coverage) or the declaring Square file (globs).
+  // Errors 8, 10, 11 and warnings 3, 7, 8 — already attributed to the
+  // realization file (anchors, coverage, read failures), the declaring Square
+  // file (globs), or `.squaring.json` (an empty universe the config caused).
   out.push(...sourceMap.findings);
 
   return out.sort((a, b) => {
