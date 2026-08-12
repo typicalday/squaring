@@ -3,6 +3,7 @@
 // walking up from the current working directory (findRepoRoot); `init` and
 // `new` act on the current working directory exactly, so creating a nested
 // repo stays possible and scaffolding never lands in a surprise parent.
+// @sq cli#concept/command-surface -- the command table of §13
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,6 +11,8 @@ import process from 'node:process';
 import { Command } from 'commander';
 import { loadGraph, activeChanges, findRepoRoot, type Graph } from './load.ts';
 import { validateGraph, hasErrors, formatDiagnostics } from './validate.ts';
+import { buildSourceMap } from './sources.ts';
+import { indexJson, indexText, rejectBothSelectors } from './indexing.ts';
 import { compileContext } from './context.ts';
 import { scaffoldSquare, scaffoldChange } from './scaffold.ts';
 import { initRepo } from './init.ts';
@@ -153,8 +156,8 @@ program
 
 program
   .command('context')
-  .argument('<id>', 'Square or Change id, or square:// / change:// URI')
-  .description('Compile and print the Context Pack for a Square or Change')
+  .argument('<id>', 'Square id, Change id, or square:// / change:// / concept URI')
+  .description('Compile and print the Context Pack for a Square, a Change, or one concept of a Square')
   .action((id: string) => {
     const graph = loadOrFail();
     try {
@@ -162,6 +165,56 @@ program
     } catch (err) {
       fail(err instanceof Error ? err.message : String(err));
     }
+  });
+
+program
+  .command('index')
+  .argument('[target]', 'Square id, concept URI, or claim URI (short or full form) — forward map')
+  .option('--file <path>', 'repo-relative file — reverse map: which Squares, concepts and claims claim it')
+  .option('--json', 'machine output: one entry per resolved pairing, in the defined order')
+  .option('--watch', 're-scan and reprint on file change')
+  .description('Print the source map: selectors and anchor sites resolved against the scan universe (SPEC §15.6)')
+  .action((target: string | undefined, options: { file?: string; json?: boolean; watch?: boolean }) => {
+    const query = {
+      ...(target === undefined ? {} : { target }),
+      ...(options.file === undefined ? {} : { file: options.file })
+    };
+    try {
+      rejectBothSelectors(query);
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err));
+    }
+
+    // One render pass. `--watch` repeats it verbatim, so a re-scan is
+    // byte-identical to a fresh one-shot run over the same tree (§15.6).
+    const render = (): string => {
+      const graph = loadOrFail();
+      const map = buildSourceMap(graph);
+      return options.json
+        ? JSON.stringify(indexJson(graph, map, query), null, 2)
+        : indexText(graph, map, query);
+    };
+
+    const emit = (): void => {
+      try {
+        process.stdout.write(render() + '\n');
+      } catch (err) {
+        fail(err instanceof Error ? err.message : String(err));
+      }
+    };
+
+    emit();
+    if (!options.watch) return;
+
+    const rootDir = findRepoRoot(process.cwd()) ?? process.cwd();
+    let pending: NodeJS.Timeout | undefined;
+    fs.watch(rootDir, { recursive: true }, (_event, filename) => {
+      // git's own churn would otherwise retrigger on every index write.
+      const rel = filename === null ? '' : filename.toString();
+      if (rel.startsWith('.git/') || rel.includes('/.git/') || rel.includes('node_modules/')) return;
+      if (pending) clearTimeout(pending);
+      pending = setTimeout(emit, 100);
+    });
   });
 
 program

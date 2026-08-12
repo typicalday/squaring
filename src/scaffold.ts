@@ -1,6 +1,7 @@
 // Templates for new Squares and Changes — SPEC §13. Scaffolding exists only
 // to eliminate blank-page schema errors; authoring stays in ordinary file
 // edits.
+// @sq cli -- `squaring new square` / `squaring new change`, the other writing command
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -32,7 +33,12 @@ purpose: >
 nonGoals:
   - "TODO: what is explicitly outside this Square's responsibility"
 # owns:
-#   concepts: []
+#   concepts:                # topics this Square addresses; tag claims with their ids
+#     - id: example-concept
+#       name: Example concept
+#       statement: TODO: one sentence on what this concept covers.
+#       sources:
+#         - glob: src/${id}/example/**
 #   state: []
 # contracts:
 #   provides:
@@ -49,6 +55,7 @@ commitments:
     statement: >
       TODO: what must remain true.
     # evidenceClass: test    # static-analysis | schema | test | runtime | model-judgment | none
+    # concepts: [example-concept]   # topics this claim is about; ids from owns.concepts
 # decisions:
 #   - id: example-decision
 #     date: YYYY-MM-DD
@@ -61,8 +68,10 @@ authority:
   owns: [invariants, boundaries]
   constrains: []
   delegates: [algorithms, file-structure]
-# bindings:
-#   - src/${id}/**
+# sources:                   # which files realize this Square (globs, never paths)
+#   - glob: src/${id}/**
+#     expect: annotated      # every matched file must carry an \`@sq\` anchor into this Square
+#     note: TODO: why this glob
 ---
 
 Free-form notes, rationale, and examples go here.

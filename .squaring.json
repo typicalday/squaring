@@ -1,0 +1,3 @@
+{
+  "scanIgnore": ["docs/**", "test/**", "README.md", "CHANGELOG.md"]
+}

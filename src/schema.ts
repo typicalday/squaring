@@ -1,11 +1,19 @@
-// Frontmatter schemas for Square and Change — SPEC §6, §7, §9.
+// Frontmatter schemas for Square and Change — SPEC §6, §7, §9, §14, §15.
 // Strictness rule (§6): unknown fields outside `extensions` are errors,
 // enforced with z.strictObject at every level.
+// @sq resource-model#concept/frontmatter-shape -- the strict shape every .square.md and .change.md must satisfy
 
 import * as z from 'zod';
 import { ID_RE } from './ids.ts';
 
 const id = z.string().regex(ID_RE, 'ids are lowercase kebab: [a-z0-9][a-z0-9-]*');
+
+/**
+ * Concept tags on a claim (§14.3): concept ids of the claim's *own* Square.
+ * Cross-Square resolution does not exist; validate.ts (§11 error 9) checks the
+ * ids against the declaring Square's `owns.concepts`.
+ */
+const conceptTags = z.array(id);
 
 const squareUriSchema = z
   .string()
@@ -35,6 +43,26 @@ export const ARCHETYPES = ['capability', 'domain', 'platform', 'boundary', 'poli
 export const CHANGE_TYPES = ['evolution', 'refactor', 'repair', 'adoption'] as const;
 export const CHANGE_PHASES = ['draft', 'active', 'blocked', 'done', 'abandoned'] as const;
 
+/**
+ * A `sources` selector (§15.3). `glob` is repo-relative and confined —
+ * absolute or `..`-carrying globs are §11 error 8, checked in validate.ts
+ * because the schema cannot report the owning file. `expect` has exactly one
+ * defined value, `annotated`.
+ */
+const selectorSchema = z.strictObject({
+  glob: z.string().min(1),
+  expect: z.literal('annotated').optional(),
+  note: z.string().optional()
+});
+
+/** A declared concept (§14.2) — an addressable topic, not a claim. */
+const conceptSchema = z.strictObject({
+  id,
+  name: z.string().min(1).optional(),
+  statement: z.string().min(1),
+  sources: z.array(selectorSchema).optional()
+});
+
 const commitmentSchema = z.strictObject({
   id,
   kind: z.enum(COMMITMENT_KINDS),
@@ -42,19 +70,22 @@ const commitmentSchema = z.strictObject({
   statement: z.string().min(1),
   evidenceClass: z.enum(EVIDENCE_CLASSES).optional(),
   // Only meaningful on archetype: policy squares (§7); validated in validate.ts.
-  appliesTo: z.union([z.literal('*'), z.array(squareUriSchema).min(1)]).optional()
+  appliesTo: z.union([z.literal('*'), z.array(squareUriSchema).min(1)]).optional(),
+  concepts: conceptTags.optional()
 });
 
 const providedContractSchema = z.strictObject({
   id,
   statement: z.string().min(1),
-  schemaRef: z.string().optional()
+  schemaRef: z.string().optional(),
+  concepts: conceptTags.optional()
 });
 
 const consumedContractSchema = z.strictObject({
   id,
   from: squareUriSchema,
-  statement: z.string().min(1)
+  statement: z.string().min(1),
+  concepts: conceptTags.optional()
 });
 
 const relationshipSchema = z.strictObject({
@@ -76,7 +107,8 @@ const decisionSchema = z.strictObject({
   // errors when that Change is missing or not done — promotion happens only
   // at completion.
   from: z.string().regex(/^change:\/\/[a-z0-9][a-z0-9-]*$/, 'expected a change://<id> URI').optional(),
-  supersededBy: id.nullable().optional()
+  supersededBy: id.nullable().optional(),
+  concepts: conceptTags.optional()
 });
 
 const scenarioSchema = z.strictObject({
@@ -84,13 +116,15 @@ const scenarioSchema = z.strictObject({
   given: z.string().min(1),
   when: z.string().min(1),
   then: z.array(z.string().min(1)).min(1),
-  evidenceClass: z.enum(EVIDENCE_CLASSES).optional()
+  evidenceClass: z.enum(EVIDENCE_CLASSES).optional(),
+  concepts: conceptTags.optional()
 });
 
 const unresolvedSchema = z.strictObject({
   id,
   question: z.string().min(1),
-  affects: z.array(z.string()).optional()
+  affects: z.array(z.string()).optional(),
+  concepts: conceptTags.optional()
 });
 
 const authoritySchema = z.strictObject({
@@ -110,7 +144,7 @@ export const SquareSchema = z.strictObject({
   nonGoals: z.array(z.string()).optional(),
   owns: z
     .strictObject({
-      concepts: z.array(z.string()).optional(),
+      concepts: z.array(conceptSchema).optional(),
       state: z.array(z.string()).optional()
     })
     .optional(),
@@ -126,12 +160,16 @@ export const SquareSchema = z.strictObject({
   scenarios: z.array(scenarioSchema).optional(),
   unresolved: z.array(unresolvedSchema).optional(),
   authority: authoritySchema.optional(),
-  bindings: z.array(z.string()).optional(),
+  // `bindings` was removed in favour of `sources` (§6 migration note, §15.7);
+  // a leftover key is §11 error 12, raised in validate.ts with the rewrite.
+  sources: z.array(selectorSchema).optional(),
   extensions: extensionsSchema.optional()
 });
 
 export type Square = z.infer<typeof SquareSchema>;
 export type Commitment = z.infer<typeof commitmentSchema>;
+export type Concept = z.infer<typeof conceptSchema>;
+export type Selector = z.infer<typeof selectorSchema>;
 
 export const ChangeSchema = z.strictObject({
   apiVersion: z.literal('squaring/v0'),
@@ -152,7 +190,10 @@ export const ChangeSchema = z.strictObject({
       z.strictObject({
         id,
         choice: z.string().min(1),
-        rationale: z.string().optional()
+        rationale: z.string().optional(),
+        // Unchecked while the Change is open — a proposed decision has no
+        // owning Square yet (§14.3); checked once promoted.
+        concepts: conceptTags.optional()
       })
     )
     .optional(),

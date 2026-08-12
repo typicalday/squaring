@@ -12,6 +12,16 @@ purpose: >
 nonGoals:
   - Enforcement by machinery — v0.1 relies on the agent following the rules;
     v0.2 pairs commitments with owenloop proofs
+owns:
+  concepts:
+    - id: conformance-rules
+      name: Conformance rules
+      statement: >
+        The A1–A9 rules themselves and the Change lifecycle they govern —
+        the text an agent is expected to have read before it edits anything.
+      sources:
+        - glob: src/protocol.ts
+          expect: annotated
 commitments:
   - id: work-through-changes
     kind: constraint
@@ -21,6 +31,7 @@ commitments:
       a Change (rule A2), and never silently rewrite an accepted Square
       (rule A1).
     appliesTo: "*"
+    concepts: [conformance-rules]
   - id: no-silent-answers
     kind: constraint
     strength: must
@@ -28,6 +39,7 @@ commitments:
       Agents never silently answer an unresolved question (rule A3) — ask
       the human, or record a proposedDecision on the Change and surface it.
     appliesTo: "*"
+    concepts: [conformance-rules]
   - id: validate-after-edit
     kind: constraint
     strength: must
@@ -35,13 +47,13 @@ commitments:
       After any edit to a .square.md or .change.md file, agents run validate
       before moving on.
     appliesTo: "*"
+    concepts: [conformance-rules]
 authority:
   owns: [conformance-rules]
-bindings:
-  - src/protocol.ts
 ---
 
 The full rule text lives in `src/protocol.ts` (PROTOCOL_MD) and is installed
 into repositories by `squaring init`. These policy commitments are injected
-into section 2 of every Square's Context Pack, so every agent sees them
-regardless of which Square it is working on. Defined by `docs/SPEC.md` §10.
+into section 3 (Non-goals and boundaries) of every Square's Context Pack, so
+every agent sees them regardless of which Square it is working on. Defined by
+`docs/SPEC.md` §10.
